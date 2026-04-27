@@ -13,7 +13,6 @@ const pool = new Pool({
     rejectUnauthorized: false
   }
 });
-
 pool.on('error', (err) => {
   console.error('Error inesperado en el pool de Postgres:', err);
 });
