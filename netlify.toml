@@ -2,9 +2,78 @@
   command = "npm install"
   publish = "public"
   functions = "netlify/functions"
- 
+
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/api/:splat"
+  from = "/login"
+  to = "/.netlify/functions/api/login"
   status = 200
- 
+
+[[redirects]]
+  from = "/register"
+  to = "/.netlify/functions/api/register"
+  status = 200
+
+[[redirects]]
+  from = "/gyms"
+  to = "/.netlify/functions/api/gyms"
+  status = 200
+
+[[redirects]]
+  from = "/gyms/:id"
+  to = "/.netlify/functions/api/gyms/:id"
+  status = 200
+
+[[redirects]]
+  from = "/categories"
+  to = "/.netlify/functions/api/categories"
+  status = 200
+
+[[redirects]]
+  from = "/categories/:id"
+  to = "/.netlify/functions/api/categories/:id"
+  status = 200
+
+[[redirects]]
+  from = "/trainers"
+  to = "/.netlify/functions/api/trainers"
+  status = 200
+
+[[redirects]]
+  from = "/trainers/:name"
+  to = "/.netlify/functions/api/trainers/:name"
+  status = 200
+
+[[redirects]]
+  from = "/trainings"
+  to = "/.netlify/functions/api/trainings"
+  status = 200
+
+[[redirects]]
+  from = "/trainings/:id"
+  to = "/.netlify/functions/api/trainings/:id"
+  status = 200
+
+[[redirects]]
+  from = "/trainings/by-gym/:id"
+  to = "/.netlify/functions/api/trainings/by-gym/:id"
+  status = 200
+
+[[redirects]]
+  from = "/trainings/by-cat/:id"
+  to = "/.netlify/functions/api/trainings/by-cat/:id"
+  status = 200
+
+[[redirects]]
+  from = "/trainings/by-trainer/:name"
+  to = "/.netlify/functions/api/trainings/by-trainer/:name"
+  status = 200
+
+[[redirects]]
+  from = "/toggle-favorite"
+  to = "/.netlify/functions/api/toggle-favorite"
+  status = 200
+
+[[redirects]]
+  from = "/favorites/:user_id"
+  to = "/.netlify/functions/api/favorites/:user_id"
+  status = 200
