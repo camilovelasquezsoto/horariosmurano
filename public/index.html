@@ -605,6 +605,27 @@
         @media (max-width: 380px) {
             .nav-bar button { font-size: 0.76em; padding: 8px 10px; }
             .brand { font-size: 1.1em; }
+            /* FIX scroll horizontal horarios en móvil */
+.card-schedule {
+    overflow-x: auto;
+    overflow-y: hidden;
+    width: 100%;
+    max-width: 100%;
+    touch-action: pan-x;
+}
+
+.schedule-grid {
+    min-width: 560px;
+}
+
+/* scrollbar (opcional pero recomendado) */
+.card-schedule::-webkit-scrollbar {
+    height: 6px;
+}
+.card-schedule::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 3px;
+}
         }
     </style>
 </head>
