@@ -4,9 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "build": "mkdir -p dist && cp -r public/* dist/",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "echo 'No build step needed'",
+    "start": "node index.js"    
   },
   "keywords": [],
   "author": "",

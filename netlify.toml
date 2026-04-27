@@ -1,7 +1,8 @@
 [build]
+  command = "npm run build"
+  publish = "public"        # ← cambia "dist" por "public" (ahí está tu index.html)
   functions = "netlify/functions"
-  publish = "dist" # O "build", asegúrate de que coincida con tu carpeta de producción de React
-
+ß
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
