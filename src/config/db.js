@@ -1,31 +1,28 @@
 const { Pool } = require('pg');
 require('dotenv').config();
+const dns = require('dns');
 
-console.log("Intentando conectar a: postgres con usuario:", process.env.DB_USER);
+// Forzamos IPv4 para evitar el error ENETUNREACH
+dns.setDefaultResultOrder('ipv4first');
 
 const pool = new Pool({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
-    ssl: {
-        rejectUnauthorized: false // ¡Esta es la línea clave para Supabase!
-    }
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME,
+  password: process.env.DB_PASSWORD,
+  port: process.env.DB_PORT,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
-// Manejo de errores del pool
-pool.on('error', (err) => {
-    console.error('Error inesperado en el pool de Postgres:', err);
-});
-
-// Prueba la conexión apenas inicia
-pool.query('SELECT NOW()', (err, res) => {
-    if (err) {
-        console.error("¡ERROR FATAL AL CONECTAR CON DB!:", err.message);
-    } else {
-        console.log("¡Conexión a la base de datos exitosa!");
-    }
+// Prueba de conexión inmediata
+pool.connect((err, client, release) => {
+  if (err) {
+    return console.error('Error FATAL al conectar con la DB:', err.stack);
+  }
+  console.log('¡Conexión a la base de datos exitosa!');
+  release();
 });
 
 module.exports = pool;
