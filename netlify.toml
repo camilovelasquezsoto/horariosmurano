@@ -1,9 +1,10 @@
 [build]
-  command = "npm run build"
-  publish = "public"        # ← cambia "dist" por "public" (ahí está tu index.html)
+  command = "npm install"
+  publish = "public"
   functions = "netlify/functions"
-ß
+ 
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"
   status = 200
+ 
