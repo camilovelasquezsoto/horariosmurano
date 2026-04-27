@@ -9,9 +9,12 @@ const pool = new Pool({
     database: process.env.DB_NAME,
     password: process.env.DB_PASSWORD,
     port: process.env.DB_PORT,
+    ssl: {
+        rejectUnauthorized: false // ¡Esta es la línea clave para Supabase!
+    }
 });
 
-// ESTO ES LO QUE FALTA PROBABLEMENTE
+// Manejo de errores del pool
 pool.on('error', (err) => {
     console.error('Error inesperado en el pool de Postgres:', err);
 });
