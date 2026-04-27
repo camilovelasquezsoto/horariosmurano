@@ -1,0 +1,8 @@
+[build]
+  functions = "netlify/functions"
+  publish = "dist" # O "build", asegúrate de que coincida con tu carpeta de producción de React
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
