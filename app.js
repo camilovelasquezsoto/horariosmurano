@@ -27,23 +27,36 @@ app.use(express.json());
  * Usamos una configuración flexible para que funcione tanto localmente (/api)
  * como en Netlify Functions (donde el prefijo puede variar).
  */
+const pool = require('./src/config/db');
 const apiRoutes = require('./src/routes/api');
 
-// Endpoint de salud compatible con múltiples rutas
-const healthCheck = (req, res) => {
-    res.json({ 
-        status: 'OK', 
-        message: 'Servidor de Murano Voley funcionando correctamente',
-        timestamp: new Date().toISOString()
-    });
+// Endpoint de salud con diagnóstico de Base de Datos
+const healthCheck = async (req, res) => {
+    try {
+        const dbRes = await pool.query('SELECT NOW()');
+        res.json({ 
+            status: 'OK', 
+            message: 'Servidor y Base de Datos funcionando correctamente',
+            db_time: dbRes.rows[0].now,
+            timestamp: new Date().toISOString()
+        });
+    } catch (err) {
+        res.status(500).json({
+            status: 'ERROR',
+            message: 'Servidor OK, pero falló la conexión a Supabase',
+            error: err.message
+        });
+    }
 };
 
 app.get('/api/health', healthCheck);
 app.get('/health', healthCheck);
 
-// Montamos las rutas de la API en ambos puntos para máxima compatibilidad
+// Montamos las rutas. El comodín en serverless puede variar, así que cubrimos ambos.
+// Algunos entornos quitan el /api, otros lo mantienen.
 app.use('/api', apiRoutes);
 app.use('/', apiRoutes);
+app.use('/.netlify/functions/api', apiRoutes);
 
 /**
  * MIDDLEWARE DE MANEJO DE ERRORES GLOBAL
