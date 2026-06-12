@@ -414,25 +414,63 @@ function toggleGlobalMap() {
 async function saveCategoryFavs(categoryId) {
     const userId = localStorage.getItem('user_id');
     if (!userId) return toast('Inicia sesión primero');
+    
+    // Obtenemos el botón de manera segura usando event.currentTarget
+    const btn = event ? event.currentTarget : document.activeElement;
+    const originalText = btn.innerHTML; // Guardamos el HTML original para restaurarlo después
+
     try {
-        const btn = document.activeElement;
-        btn.textContent = 'Guardando...';
+        btn.textContent = '⏳ Guardando...';
+        btn.disabled = true; // Desactivar para evitar múltiples clics
         
         // Obtener todos los horarios de esta categoría
         const res = await fetch(`${API_BASE_URL}/trainings/by-cat/${categoryId}`);
         const trs = await res.json();
         
-        // Guardarlos uno por uno (o ignorar si ya están)
+        if (!trs || trs.length === 0) {
+            toast('No hay horarios para guardar');
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+            return;
+        }
+
+        // Guardarlos uno por uno (nuestra ruta de toggle-favorite los agregará si no existen)
         for (let t of trs) {
-            await fetch(`${API_BASE_URL}/toggle-favorite`, {
+            // Intentar agregarlo. Si devuelve 'removed' (porque ya existía), lo volvemos a agregar
+            const favRes = await fetch(`${API_BASE_URL}/toggle-favorite`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({training_id: t.id, user_id: userId})
             });
+            const favData = await favRes.json();
+            
+            // Si la acción fue remover, lo volvemos a enviar para que quede guardado sí o sí
+            if (favData.action === 'removed') {
+                await fetch(`${API_BASE_URL}/toggle-favorite`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({training_id: t.id, user_id: userId})
+                });
+            }
         }
-        toast(`⭐ Toda la categoría guardada`);
-        btn.textContent = 'Ver Horarios';
-    } catch (e) { toast('Error al guardar categoría'); }
+        toast(`✅ Categoría completa guardada`);
+        btn.innerHTML = '✔️ Guardado con éxito';
+        btn.style.color = 'var(--success)';
+        btn.style.borderColor = 'var(--success)';
+        
+        // Restaurar estado visual después de 3 segundos
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.style.color = '';
+            btn.style.borderColor = '';
+            btn.disabled = false;
+        }, 3000);
+
+    } catch (e) { 
+        toast('❌ Error al guardar categoría'); 
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
 }
 
 function renderEventCard(t, isFavView = false) {
