@@ -1,20 +1,19 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 
-// 1. Validación estricta: Si no hay URL, detenemos todo antes de fallar
+// 1. Validación preventiva (No bloqueante en serverless para evitar crashes durante el build)
 if (!process.env.DATABASE_URL) {
-  console.error("ERROR CRÍTICO: La variable DATABASE_URL no está configurada en Render.");
-  process.exit(1); // Esto detiene la app para que no intente conectar a la nada
+  console.warn("ADVERTENCIA: La variable DATABASE_URL no está configurada aún.");
 }
 
 console.log("Iniciando pool de conexión...");
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || "",
   ssl: {
     rejectUnauthorized: false // Indispensable para Supabase
   },
-  connectionTimeoutMillis: 10000, // 10 segundos de espera antes de rendirse
+  connectionTimeoutMillis: 10000, 
 });
 
 // 2. Manejo de errores en el pool global
