@@ -200,9 +200,14 @@ function renderEventCard(t) {
         <div class="event-card">
             <div class="ev-title">${titulo}</div>
             <div class="ev-trainer">${t.trainer_name || 'Sin profesor'}</div>
-            <div class="ev-actions" style="margin-top:5px; display:flex; gap:5px;">
-                <button onclick="toggleFav(${t.id})" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.2); border:none; color:white; cursor:pointer;">⭐</button>
-                ${isAdmin ? `<button onclick="deleteTraining(${t.id})" style="padding:4px 8px; font-size:0.7rem; background:var(--danger); border:none; color:white; cursor:pointer; border-radius:4px;">✕</button>` : ''}
+            <div class="ev-actions" style="margin-top:5px; display:flex; flex-wrap:wrap; gap:5px;">
+                <button onclick="toggleFav(${t.id})" title="Añadir/Quitar de Favoritos" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.3); border:1px solid #444; color:white; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
+                    ⭐ Fav
+                </button>
+                ${isAdmin ? `
+                <button onclick="deleteTraining(${t.id})" title="Borrar este bloque del sistema" style="padding:4px 8px; font-size:0.7rem; background:rgba(255,23,68,0.2); border:1px solid var(--danger); color:var(--danger); cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
+                    ✕ Borrar Clase
+                </button>` : ''}
             </div>
         </div>`;
 }
@@ -265,9 +270,9 @@ async function saveTraining() {
 }
 
 async function deleteTraining(id) {
-    if (!confirm("¿Eliminar este horario?")) return;
+    if (!confirm("⚠️ ATENCIÓN ADMIN:\n\n¿Estás seguro de que deseas ELIMINAR esta clase de la base de datos?\n\n(Esto la borrará del calendario para todos los usuarios).")) return;
     await fetch(`${API_BASE_URL}/trainings/${id}`, { method: 'DELETE' });
-    toast('Horario eliminado');
+    toast('Horario eliminado del sistema');
     setTimeout(() => location.reload(), 800);
 }
 
