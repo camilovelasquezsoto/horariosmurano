@@ -340,3 +340,102 @@ button.primary:hover {
     z-index: 10000;
 }
 #toast.show { transform: translateX(-50%) translateY(0); }
+
+/* ── FOOTER PREMIUM ── */
+footer {
+    background: linear-gradient(180deg, #050505 0%, #0a0a0a 100%);
+    border-top: 1px solid var(--border);
+    padding: 60px 20px 40px;
+    margin-top: 80px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Efecto de luz superior en el footer */
+footer::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 60%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.5;
+}
+
+.footer-brand {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 900;
+    font-size: 1.8rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text);
+    margin-bottom: 8px;
+}
+.footer-brand span {
+    color: var(--accent);
+}
+
+.footer-subtitle {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 30px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.socials {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 40px;
+}
+
+.social-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border-bright);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 10px 20px;
+    border-radius: 50px;
+    transition: all 0.3s ease;
+}
+
+.social-btn:hover {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-3px);
+    box-shadow: 0 4px 15px rgba(255,87,34,0.15);
+}
+
+.social-btn svg { 
+    width: 18px; 
+    height: 18px; 
+    fill: currentColor; 
+}
+
+.footer-bottom {
+    border-top: 1px solid var(--border);
+    padding-top: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+}
+
+.footer-bottom p {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+}
