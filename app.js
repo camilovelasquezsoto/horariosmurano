@@ -27,12 +27,13 @@ app.use(express.json());
  * Todas las rutas de la API estarán bajo el prefijo '/api'
  */
 const apiRoutes = require('./src/routes/api');
-app.use('/api', apiRoutes);
 
 // Ruta de prueba para verificar que el servidor está vivo
-app.get('/health', (req, res) => {
+app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'Servidor de Murano Voley funcionando correctamente' });
 });
+
+app.use('/api', apiRoutes);
 
 /**
  * MIDDLEWARE DE MANEJO DE ERRORES GLOBAL
