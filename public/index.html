@@ -43,7 +43,10 @@
         </div>
         
         <!-- Mapa Global para Gimnasios -->
-        <div id="global-map-container" class="hidden" style="margin-bottom: 20px; width: 100%;"></div>
+        <div id="global-map-wrapper" class="hidden" style="margin-bottom: 20px; width: 100%; text-align: center;">
+            <button id="toggle-map-btn" onclick="toggleGlobalMap()" style="margin-bottom: 15px; border-color: var(--accent); color: var(--accent); font-size: 1rem;">🗺️ Ver Mapa del Complejo</button>
+            <div id="global-map-container" class="hidden"></div>
+        </div>
 
         <div id="list-container">
             <!-- Aquí se cargan las cards dinámicamente -->

@@ -90,17 +90,25 @@ async function renderList(type) {
         }
 
         // Lógica del Mapa Global
+        const mapWrapper = document.getElementById('global-map-wrapper');
         const mapContainer = document.getElementById('global-map-container');
         if (type === 'gym' && data.length > 0 && data[0].address) {
-            const mapUrl = buildMapUrl(data[0].address);
-            if (mapUrl) {
-                mapContainer.innerHTML = `<iframe class="gym-map" src="${mapUrl}" allowfullscreen="" loading="lazy" style="width:100%; border:1px solid var(--border); border-radius:12px;"></iframe>`;
-                mapContainer.classList.remove('hidden');
-            } else {
+            window.currentMapUrl = buildMapUrl(data[0].address);
+            if (window.currentMapUrl) {
+                mapWrapper.classList.remove('hidden');
                 mapContainer.classList.add('hidden');
+                mapContainer.innerHTML = '';
+                const btnMap = document.getElementById('toggle-map-btn');
+                if (btnMap) {
+                    btnMap.textContent = '🗺️ Ver Mapa del Complejo';
+                    btnMap.style.borderColor = 'var(--accent)';
+                    btnMap.style.color = 'var(--accent)';
+                }
+            } else {
+                mapWrapper.classList.add('hidden');
             }
         } else {
-            mapContainer.classList.add('hidden');
+            mapWrapper.classList.add('hidden');
         }
 
         container.innerHTML = data.map(item => {
@@ -384,11 +392,30 @@ async function toggleFav(tId) {
     } catch (e) { toast('Error al actualizar'); }
 }
 
+function toggleGlobalMap() {
+    const container = document.getElementById('global-map-container');
+    const btn = document.getElementById('toggle-map-btn');
+    if (container.classList.contains('hidden')) {
+        if (!container.innerHTML.includes('iframe')) {
+            container.innerHTML = `<iframe class="gym-map" src="${window.currentMapUrl}" allowfullscreen="" loading="lazy"></iframe>`;
+        }
+        container.classList.remove('hidden');
+        btn.textContent = '🗺️ Ocultar Mapa';
+        btn.style.borderColor = 'var(--text-muted)';
+        btn.style.color = 'var(--text-muted)';
+    } else {
+        container.classList.add('hidden');
+        btn.textContent = '🗺️ Ver Mapa del Complejo';
+        btn.style.borderColor = 'var(--accent)';
+        btn.style.color = 'var(--accent)';
+    }
+}
+
 async function saveCategoryFavs(categoryId) {
     const userId = localStorage.getItem('user_id');
     if (!userId) return toast('Inicia sesión primero');
     try {
-        btn = document.activeElement;
+        const btn = document.activeElement;
         btn.textContent = 'Guardando...';
         
         // Obtener todos los horarios de esta categoría
