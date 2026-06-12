@@ -148,10 +148,11 @@
         </a>
     </div>
     <div class="footer-divider"></div>
-    <p>© 2026 Murano Puerto Montt</p>
+    <p>© <span id="current-year"></span> Murano Puerto Montt</p>
 </footer>
 
 <!-- Lógica Modularizada -->
+<script>document.getElementById('current-year').textContent = new Date().getFullYear();</script>
 <script src="script.js"></script>
 </body>
 </html>
