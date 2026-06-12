@@ -1,11 +1,5 @@
 /**
  * LÓGICA INTEGRAL - MURANO VOLEY "NEXT LEVEL"
- * 
- * Este archivo gestiona TODA la interactividad:
- * - Carga premium con Skeletons.
- * - Gestión de Horarios por Cancha/Categoría/Profesor.
- * - Panel de Administración completo.
- * - Favoritos y Autenticación.
  */
 
 const API_BASE_URL = '/api';
@@ -33,6 +27,7 @@ function escQ(str) {
 
 function toast(msg) {
     const el = document.getElementById('toast');
+    if (!el) return;
     el.textContent = msg;
     el.classList.add('show');
     clearTimeout(el._timer);
@@ -56,6 +51,7 @@ function showView(v) {
 
 function renderSkeletons(count = 4) {
     const container = document.getElementById('list-container');
+    if (!container) return;
     container.innerHTML = Array(count).fill(0).map(() => `
         <div class="card">
             <div class="card-inner">
@@ -81,24 +77,55 @@ async function renderList(type) {
         const res = await fetch(`${API_BASE_URL}${url}`);
         
         if (!res.ok) {
-            const errorText = await res.text();
-            console.error('Error API:', res.status, errorText);
-            throw new Error(`Error ${res.status}: No se pudieron cargar los datos.`);
+            throw new Error(`Error ${res.status}: Problema con la base de datos.`);
         }
 
         const data = await res.json();
-...
+        const container = document.getElementById('list-container');
+        
+        if (!data || data.length === 0) {
+            container.innerHTML = `<p style="grid-column:1/-1; text-align:center; color:var(--text-dim); padding:40px;">No hay datos cargados.</p>`;
+            return;
+        }
+
+        container.innerHTML = data.map(item => {
+            const key = safeKey(item.id || item.name);
+            const rawId = type === 'trainer' ? item.name : item.id;
+            const mapUrl = (type === 'gym' && item.address) ? buildMapUrl(item.address) : null;
+
+            return `
+            <div class="card" id="card-wrapper-${key}">
+                <div class="card-inner">
+                    <div class="card-info">
+                        <div class="img-box">
+                            <img src="${item.image_url || 'https://via.placeholder.com/300x300/111111/FF5722?text=+'}"
+                                 onerror="this.src='https://via.placeholder.com/300x300/111111/FF5722?text=+'"
+                                 loading="lazy">
+                        </div>
+                        <div class="card-text-group">
+                            <h3>${item.name}</h3>
+                            ${item.address ? `<div class="card-address">${item.address}</div>` : ''}
+                            <button class="primary" onclick="toggleSchedule(this, '${type}', '${escQ(String(rawId))}', '${key}')"
+                                    style="width:100%; margin-top:15px;">
+                                Ver Horarios
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-schedule hidden" id="sched-${key}"></div>
+                </div>
+                ${mapUrl ? `<iframe class="gym-map hidden" id="map-${key}" src="${mapUrl}" allowfullscreen="" loading="lazy"></iframe>` : ''}
+            </div>`;
+        }).join('');
     } catch (e) {
-        console.error('Fetch error:', e);
+        console.error(e);
         const container = document.getElementById('list-container');
         container.innerHTML = `
             <div style="grid-column:1/-1; text-align:center; padding:40px;">
-                <p style="color:var(--accent); font-weight:bold; margin-bottom:10px;">⚠️ ${e.message}</p>
-                <p style="color:var(--text-dim); font-size:0.9rem;">Esto suele pasar si la base de datos no está conectada o la URL es incorrecta.</p>
+                <p style="color:var(--accent); font-weight:bold;">⚠️ Error de conexión</p>
+                <p style="color:var(--text-dim); margin-top:10px;">${e.message}</p>
                 <button onclick="renderList('${type}')" style="margin-top:20px;">Reintentar</button>
             </div>
         `;
-        toast('Error al conectar con la API');
     }
 }
 
@@ -117,11 +144,7 @@ async function toggleSchedule(btn, type, id, wrapperKey) {
     }
 
     btn.textContent = 'Cargando...';
-    const url = type === 'gym' 
-        ? `/trainings/by-gym/${id}` 
-        : type === 'cat' 
-            ? `/trainings/by-cat/${id}` 
-            : `/trainings/by-trainer/${encodeURIComponent(id)}`;
+    const url = type === 'gym' ? `/trainings/by-gym/${id}` : type === 'cat' ? `/trainings/by-cat/${id}` : `/trainings/by-trainer/${encodeURIComponent(id)}`;
 
     try {
         const res = await fetch(`${API_BASE_URL}${url}`);
@@ -165,8 +188,8 @@ function renderEventCard(t) {
             <div class="ev-title">${titulo}</div>
             <div class="ev-trainer">${t.trainer_name || 'Sin profesor'}</div>
             <div class="ev-actions" style="margin-top:5px; display:flex; gap:5px;">
-                <button onclick="toggleFav(${t.id})" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.2); border:none; cursor:pointer; color:white;">⭐</button>
-                ${isAdmin ? `<button onclick="deleteTraining(${t.id})" style="padding:4px 8px; font-size:0.7rem; background:var(--danger); border:none; cursor:pointer; color:white; border-radius:4px;">✕</button>` : ''}
+                <button onclick="toggleFav(${t.id})" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.2); border:none; color:white; cursor:pointer;">⭐</button>
+                ${isAdmin ? `<button onclick="deleteTraining(${t.id})" style="padding:4px 8px; font-size:0.7rem; background:var(--danger); border:none; color:white; cursor:pointer; border-radius:4px;">✕</button>` : ''}
             </div>
         </div>`;
 }
@@ -210,7 +233,7 @@ async function loadAdminPanel() {
                     </div>
                 </div>`).join('')}
             </details>`;
-    } catch (e) { toast('Error al cargar panel de control'); }
+    } catch (e) { toast('Error al cargar panel'); }
 }
 
 async function saveTraining() {
@@ -279,7 +302,7 @@ async function register() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({ email, password, adminKey })
         });
-        if (res.ok) toast('Usuario creado. ¡Ahora ingresa!');
+        if (res.ok) toast('Usuario creado. ¡Ingresa!');
         else toast('Error al registrar');
     } catch (e) { toast('Error de red'); }
 }
@@ -288,6 +311,7 @@ function updateUI() {
     const user = localStorage.getItem('email');
     const role = localStorage.getItem('role');
     const panel = document.getElementById('auth-panel');
+    if (!panel) return;
     if (user) {
         panel.innerHTML = `
             <span>${user}</span>
@@ -309,7 +333,6 @@ function logout() {
 
 function buildMapUrl(address) {
     if (!address) return null;
-    // Si la dirección ya es un link de Google Maps (app.goo.gl), intentamos extraerlo o usarlo de base
     if (address.includes('http')) {
         return `https://maps.google.com/maps?q=${encodeURIComponent(address)}&output=embed`;
     }
@@ -319,7 +342,7 @@ function buildMapUrl(address) {
 
 async function toggleFav(tId) {
     const userId = localStorage.getItem('user_id');
-    if (!userId) return toast('Inicia sesión para favoritos');
+    if (!userId) return toast('Inicia sesión');
     try {
         const res = await fetch(`${API_BASE_URL}/toggle-favorite`, {
             method: 'POST',
@@ -347,7 +370,6 @@ async function renderFavorites() {
     } catch (e) { toast('Error al cargar favoritos'); }
 }
 
-// Inicialización
 document.addEventListener('DOMContentLoaded', () => {
     updateUI();
     renderList('gym');
