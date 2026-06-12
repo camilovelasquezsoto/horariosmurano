@@ -79,43 +79,25 @@ async function renderList(type) {
     
     try {
         const res = await fetch(`${API_BASE_URL}${url}`);
-        const data = await res.json();
-
-        const container = document.getElementById('list-container');
-        if (!data || data.length === 0) {
-            container.innerHTML = `<p style="grid-column:1/-1; text-align:center; color:var(--text-dim); padding:40px;">No se encontraron datos. Asegúrate de cargar el SQL y configurar DATABASE_URL.</p>`;
-            return;
+        
+        if (!res.ok) {
+            const errorText = await res.text();
+            console.error('Error API:', res.status, errorText);
+            throw new Error(`Error ${res.status}: No se pudieron cargar los datos.`);
         }
 
-        container.innerHTML = data.map(item => {
-            const key = safeKey(item.id || item.name);
-            const rawId = type === 'trainer' ? item.name : item.id;
-            const mapUrl = (type === 'gym' && item.address) ? buildMapUrl(item.address) : null;
-
-            return `
-            <div class="card" id="card-wrapper-${key}">
-                <div class="card-inner">
-                    <div class="card-info">
-                        <div class="img-box">
-                            <img src="${item.image_url || 'https://via.placeholder.com/300x300/111111/FF5722?text=+'}"
-                                 onerror="this.src='https://via.placeholder.com/300x300/111111/FF5722?text=+'"
-                                 loading="lazy">
-                        </div>
-                        <div class="card-text-group">
-                            <h3>${item.name}</h3>
-                            ${item.address ? `<div class="card-address">${item.address}</div>` : ''}
-                            <button class="primary" onclick="toggleSchedule(this, '${type}', '${escQ(String(rawId))}', '${key}')"
-                                    style="width:100%; margin-top:15px;">
-                                Ver Horarios
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-schedule hidden" id="sched-${key}"></div>
-                </div>
-                ${mapUrl ? `<iframe class="gym-map hidden" id="map-${key}" src="${mapUrl}" allowfullscreen="" loading="lazy"></iframe>` : ''}
-            </div>`;
-        }).join('');
+        const data = await res.json();
+...
     } catch (e) {
+        console.error('Fetch error:', e);
+        const container = document.getElementById('list-container');
+        container.innerHTML = `
+            <div style="grid-column:1/-1; text-align:center; padding:40px;">
+                <p style="color:var(--accent); font-weight:bold; margin-bottom:10px;">⚠️ ${e.message}</p>
+                <p style="color:var(--text-dim); font-size:0.9rem;">Esto suele pasar si la base de datos no está conectada o la URL es incorrecta.</p>
+                <button onclick="renderList('${type}')" style="margin-top:20px;">Reintentar</button>
+            </div>
+        `;
         toast('Error al conectar con la API');
     }
 }

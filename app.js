@@ -24,16 +24,26 @@ app.use(express.json());
 
 /**
  * RUTAS
- * Todas las rutas de la API estarán bajo el prefijo '/api'
+ * Usamos una configuración flexible para que funcione tanto localmente (/api)
+ * como en Netlify Functions (donde el prefijo puede variar).
  */
 const apiRoutes = require('./src/routes/api');
 
-// Ruta de prueba para verificar que el servidor está vivo
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'OK', message: 'Servidor de Murano Voley funcionando correctamente' });
-});
+// Endpoint de salud compatible con múltiples rutas
+const healthCheck = (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        message: 'Servidor de Murano Voley funcionando correctamente',
+        timestamp: new Date().toISOString()
+    });
+};
 
+app.get('/api/health', healthCheck);
+app.get('/health', healthCheck);
+
+// Montamos las rutas de la API en ambos puntos para máxima compatibilidad
 app.use('/api', apiRoutes);
+app.use('/', apiRoutes);
 
 /**
  * MIDDLEWARE DE MANEJO DE ERRORES GLOBAL
