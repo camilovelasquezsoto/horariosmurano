@@ -139,6 +139,7 @@ header {
     gap: 12px;
     margin-bottom: 40px;
     overflow-x: auto;
+    padding-top: 5px; /* Evita que el hover oculte el borde superior */
     padding-bottom: 10px;
 }
 .nav-bar::-webkit-scrollbar { height: 0; }
@@ -442,55 +443,77 @@ details[open] summary { color: var(--accent); }
 
 /* ── RESPONSIVE ── */
 @media (max-width: 768px) {
-    header { padding: 0 15px; height: 60px; }
-    .brand h1 { font-size: 1.3rem; }
+    header { padding: 0 15px; height: 60px; background: rgba(18, 18, 18, 0.95); }
+    .brand h1 { font-size: 1.35rem; }
     
-    .container { padding: 15px 10px; }
-    .nav-bar { margin-bottom: 15px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 5px; }
+    .container { padding: 15px 12px; }
+    .nav-bar { 
+        margin-bottom: 18px; 
+        flex-wrap: nowrap; 
+        overflow-x: auto; 
+        padding-top: 6px; 
+        padding-bottom: 8px; 
+        gap: 10px;
+    }
     .nav-bar::-webkit-scrollbar { display: none; }
-    button { padding: 8px 14px; font-size: 0.75rem; flex-shrink: 0; }
     
-    #list-container { grid-template-columns: 1fr; gap: 12px; }
+    /* Botones de navegación móviles tipo 'píldora' para verse más ordenados */
+    .nav-bar button { padding: 8px 16px; font-size: 0.78rem; border-radius: 50px; flex-shrink: 0; }
     
+    #list-container { grid-template-columns: 1fr; gap: 16px; }
+    
+    .card { border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
     .card-inner { flex-direction: column; }
     .card-info { 
         width: 100%; 
         border-right: none; 
-        border-bottom: 1px solid var(--border); 
+        border-bottom: 1px solid var(--border-bright); 
         flex-direction: row; 
         align-items: center;
-        padding: 12px;
+        padding: 16px;
+        gap: 14px;
+        background: linear-gradient(145deg, rgba(20,20,20,0.4) 0%, rgba(10,10,10,0.1) 100%);
     }
-    .card-info .img-box { width: 45px; height: 45px; flex-shrink: 0; border-radius: 6px; }
+    
+    /* Imagen de perfil de tarjeta redonda en celular para mejor estética */
+    .card-info .img-box { 
+        width: 54px; height: 54px; 
+        flex-shrink: 0; 
+        border-radius: 50%; 
+        border: 2px solid var(--border-bright);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
     
     .card-text-group { flex: 1; display: flex; flex-direction: column; justify-content: center; }
-    .card-text-group h3 { font-size: 1.05rem; margin-bottom: 2px; }
-    .card-text-group button { margin-top: 6px; padding: 6px 10px; font-size: 0.75rem; }
+    .card-text-group h3 { font-size: 1.15rem; margin-bottom: 3px; letter-spacing: 0.5px; }
+    .card-text-group .card-address { font-size: 0.75rem; opacity: 0.8; }
+    .card-text-group button { margin-top: 8px; padding: 8px 14px; font-size: 0.8rem; border-radius: 8px; }
 
     .card-schedule { 
-        padding: 10px 5px; 
-        /* Asegura que el contenedor permita scroll horizontal fluido */
+        padding: 14px 10px; 
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
+        background: rgba(0,0,0,0.3);
     }
     
     .schedule-grid { 
-        /* Reducimos el ancho mínimo de la grilla para que quepa mejor, pero siga requiriendo scroll si es muy pequeña la pantalla */
-        min-width: 420px; 
-        grid-template-columns: 50px repeat(5, 1fr);
+        min-width: 440px; 
+        grid-template-columns: 55px repeat(5, 1fr);
         gap: 1px;
+        border-radius: 8px;
     }
 
-    .cell { padding: 6px 4px; min-height: 60px; }
+    .cell { padding: 8px 4px; min-height: 60px; }
     .cell.header { padding: 10px 2px; font-size: 0.65rem; }
-    .cell.time-label { font-size: 0.6rem; }
+    .cell.time-label { font-size: 0.65rem; }
     
-    .event-card { padding: 4px; border-radius: 4px; }
-    .ev-title { font-size: 0.65rem; margin-bottom: 2px; }
-    .ev-trainer { font-size: 0.6rem; }
-    .ev-actions button { font-size: 0.6rem; padding: 3px 6px; }
+    .event-card { padding: 5px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+    .ev-title { font-size: 0.7rem; margin-bottom: 2px; }
+    .ev-trainer { font-size: 0.65rem; }
+    .ev-actions { justify-content: center; }
+    .ev-actions button { font-size: 0.65rem; padding: 4px 8px; border-radius: 4px; }
     
-    .gym-map { aspect-ratio: 16/9; margin-bottom: 15px; border-radius: 8px; }
+    .gym-map { aspect-ratio: 16/9; margin-bottom: 16px; border-radius: 12px; }
 }
 
 /* Toast moderno */
