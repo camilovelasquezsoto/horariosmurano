@@ -85,13 +85,27 @@ async function renderList(type) {
         
         if (!data || data.length === 0) {
             container.innerHTML = `<p style="grid-column:1/-1; text-align:center; color:var(--text-dim); padding:40px;">No hay datos cargados.</p>`;
+            document.getElementById('global-map-container').classList.add('hidden');
             return;
+        }
+
+        // Lógica del Mapa Global
+        const mapContainer = document.getElementById('global-map-container');
+        if (type === 'gym' && data.length > 0 && data[0].address) {
+            const mapUrl = buildMapUrl(data[0].address);
+            if (mapUrl) {
+                mapContainer.innerHTML = `<iframe class="gym-map" src="${mapUrl}" allowfullscreen="" loading="lazy" style="width:100%; border:1px solid var(--border); border-radius:12px;"></iframe>`;
+                mapContainer.classList.remove('hidden');
+            } else {
+                mapContainer.classList.add('hidden');
+            }
+        } else {
+            mapContainer.classList.add('hidden');
         }
 
         container.innerHTML = data.map(item => {
             const key = safeKey(item.id || item.name);
             const rawId = type === 'trainer' ? item.name : item.id;
-            const mapUrl = (type === 'gym' && item.address) ? buildMapUrl(item.address) : null;
 
             return `
             <div class="card" id="card-wrapper-${key}">
@@ -104,7 +118,6 @@ async function renderList(type) {
                         </div>
                         <div class="card-text-group">
                             <h3>${item.name}</h3>
-                            ${item.address ? `<div class="card-address">${item.address}</div>` : ''}
                             <button class="primary" onclick="toggleSchedule(this, '${type}', '${escQ(String(rawId))}', '${key}')"
                                     style="width:100%; margin-top:15px;">
                                 Ver Horarios
@@ -113,12 +126,12 @@ async function renderList(type) {
                     </div>
                     <div class="card-schedule hidden" id="sched-${key}"></div>
                 </div>
-                ${mapUrl ? `<iframe class="gym-map hidden" id="map-${key}" src="${mapUrl}" allowfullscreen="" loading="lazy"></iframe>` : ''}
             </div>`;
         }).join('');
     } catch (e) {
         console.error(e);
         const container = document.getElementById('list-container');
+        document.getElementById('global-map-container').classList.add('hidden');
         container.innerHTML = `
             <div style="grid-column:1/-1; text-align:center; padding:40px;">
                 <p style="color:var(--accent); font-weight:bold;">⚠️ Error de conexión</p>
@@ -333,11 +346,10 @@ function logout() {
 
 function buildMapUrl(address) {
     if (!address) return null;
-    if (address.includes('http')) {
-        return `https://maps.google.com/maps?q=${encodeURIComponent(address)}&output=embed`;
-    }
-    const query = encodeURIComponent(address + ', Puerto Montt, Chile');
-    return `https://maps.google.com/maps?q=${query}&output=embed&z=16`;
+    // Los enlaces acortados de Google Maps (app.goo.gl) no funcionan bien dentro de iframes.
+    // Para evitar que el iframe falle por políticas de Google, forzamos una búsqueda textual del complejo.
+    const query = encodeURIComponent('Centro Deportivo Murano, Puerto Montt, Chile');
+    return `https://maps.google.com/maps?q=${query}&output=embed&z=15`;
 }
 
 async function toggleFav(tId) {
