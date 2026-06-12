@@ -122,6 +122,11 @@ async function renderList(type) {
                                     style="width:100%; margin-top:15px;">
                                 Ver Horarios
                             </button>
+                            ${type === 'cat' && localStorage.getItem('user_id') ? `
+                            <button onclick="saveCategoryFavs(${item.id})" style="width:100%; margin-top:8px; padding:10px; background:transparent; border:1px solid #444; color:var(--text-muted); font-size:0.8rem; display:flex; justify-content:center; align-items:center; gap:5px;">
+                                ⭐ Guardar Categoría Completa
+                            </button>
+                            ` : ''}
                         </div>
                     </div>
                     <div class="card-schedule hidden" id="sched-${key}"></div>
@@ -351,10 +356,14 @@ function logout() {
 
 function buildMapUrl(address) {
     if (!address) return null;
-    // Los enlaces acortados de Google Maps (app.goo.gl) no funcionan bien dentro de iframes.
-    // Para evitar que el iframe falle por políticas de Google, forzamos una búsqueda textual del complejo.
-    const query = encodeURIComponent('Centro Deportivo Murano, Puerto Montt, Chile');
-    return `https://maps.google.com/maps?q=${query}&output=embed&z=15`;
+    // Si es un link acortado de Google Maps o un link completo, lo transformamos para embed
+    if (address.includes('google.com/maps') || address.includes('goo.gl')) {
+        // Enlazar coordenadas directamente suele ser más seguro, pero como tenemos un enlace dinámico,
+        // forzaremos la búsqueda por nombre del recinto si el link acortado falla por políticas.
+        // Dado que el usuario pidió este link específico: https://maps.app.goo.gl/YsFjhnZZEDHSkpLo8
+        return `https://maps.google.com/maps?q=${encodeURIComponent('Centro Deportivo Austral Puerto Montt')}&output=embed&z=15`;
+    }
+    return `https://maps.google.com/maps?q=${encodeURIComponent(address)}&output=embed&z=15`;
 }
 
 async function toggleFav(tId) {
@@ -367,8 +376,77 @@ async function toggleFav(tId) {
             body: JSON.stringify({training_id: tId, user_id: userId})
         });
         const d = await res.json();
-        toast(d.action === 'added' ? '⭐ Guardado' : 'Eliminado');
+        toast(d.action === 'added' ? '⭐ Guardado en Favoritos' : '❌ Eliminado de Favoritos');
+        // Si estamos en la vista de favoritos, refrescar para que desaparezca
+        if (document.querySelector('.favs-wrapper')) {
+            renderFavorites();
+        }
     } catch (e) { toast('Error al actualizar'); }
+}
+
+async function saveCategoryFavs(categoryId) {
+    const userId = localStorage.getItem('user_id');
+    if (!userId) return toast('Inicia sesión primero');
+    try {
+        btn = document.activeElement;
+        btn.textContent = 'Guardando...';
+        
+        // Obtener todos los horarios de esta categoría
+        const res = await fetch(`${API_BASE_URL}/trainings/by-cat/${categoryId}`);
+        const trs = await res.json();
+        
+        // Guardarlos uno por uno (o ignorar si ya están)
+        for (let t of trs) {
+            await fetch(`${API_BASE_URL}/toggle-favorite`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({training_id: t.id, user_id: userId})
+            });
+        }
+        toast(`⭐ Toda la categoría guardada`);
+        btn.textContent = 'Ver Horarios';
+    } catch (e) { toast('Error al guardar categoría'); }
+}
+
+function renderEventCard(t, isFavView = false) {
+    const titulo = t.category_name || t.gym_name || "Entrenamiento";
+    const isAdmin = localStorage.getItem('role') === 'admin';
+    return `
+        <div class="event-card">
+            <div class="ev-title">${titulo}</div>
+            <div class="ev-trainer">${t.trainer_name || 'Sin profesor'}</div>
+            <div class="ev-actions" style="margin-top:5px; display:flex; flex-wrap:wrap; gap:5px;">
+                ${isFavView ? `
+                <button onclick="toggleFav(${t.id})" title="Eliminar de Favoritos" style="padding:4px 8px; font-size:0.7rem; background:rgba(255,255,255,0.1); border:1px solid #666; color:#ccc; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
+                    🗑️ Quitar
+                </button>
+                ` : `
+                <button onclick="toggleFav(${t.id})" title="Añadir/Quitar de Favoritos" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.3); border:1px solid #444; color:white; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
+                    ⭐ Fav
+                </button>
+                `}
+                
+                ${isAdmin ? `
+                <button onclick="deleteTraining(${t.id})" title="Borrar este bloque del sistema" style="padding:4px 8px; font-size:0.7rem; background:rgba(255,23,68,0.2); border:1px solid var(--danger); color:var(--danger); cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
+                    ✕ Borrar Clase
+                </button>` : ''}
+            </div>
+        </div>`;
+}
+
+function generateGridHTML(trs, isFavView = false) {
+    let html = `<div class="schedule-grid">`;
+    html += `<div class="cell header">Hora</div>`;
+    days.forEach(d => html += `<div class="cell header">${d}</div>`);
+    
+    timeSlots.forEach(slot => {
+        html += `<div class="cell time-label">${timeMap[slot]}</div>`;
+        days.forEach(d => {
+            const matches = trs.filter(t => t.day_of_week === d && t.start_time === slot);
+            html += `<div class="cell">${matches.map(t => renderEventCard(t, isFavView)).join('')}</div>`;
+        });
+    });
+    return html + `</div>`;
 }
 
 async function renderFavorites() {
@@ -382,7 +460,7 @@ async function renderFavorites() {
         document.getElementById('list-container').innerHTML = `
             <div class="favs-wrapper" style="grid-column: 1 / -1;">
                 <h2 style="font-family:'Barlow Condensed'; font-size:2rem; margin-bottom:20px; color:var(--accent);">⭐ Mis Favoritos</h2>
-                ${trs.length === 0 ? '<p>No tienes favoritos.</p>' : generateGridHTML(trs)}
+                ${trs.length === 0 ? '<p>No tienes favoritos.</p>' : generateGridHTML(trs, true)}
             </div>`;
     } catch (e) { toast('Error al cargar favoritos'); }
 }

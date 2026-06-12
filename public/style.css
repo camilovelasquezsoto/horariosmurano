@@ -236,6 +236,17 @@ button.primary:hover {
     font-weight: 500;
 }
 
+/* ── MAPA GLOBAL ── */
+.gym-map {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: none;
+    border-radius: 16px;
+    margin-bottom: 24px;
+    background: #1a1a1a;
+    box-shadow: var(--shadow-md);
+}
+
 /* ── HORARIOS ── */
 .card-schedule {
     flex: 1;
@@ -298,6 +309,128 @@ button.primary:hover {
     margin-bottom: 4px;
 }
 .ev-trainer { font-size: 0.7rem; color: var(--text-muted); font-style: italic; }
+
+/* ── INPUTS Y PANELES (LOGIN / ADMIN) ── */
+input, select {
+    width: 100%;
+    padding: 14px 18px;
+    margin: 8px 0;
+    background: #111111;
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'Barlow', sans-serif;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    -webkit-appearance: none;
+    appearance: none;
+}
+input:focus, select:focus { 
+    outline: none; 
+    border-color: var(--accent); 
+    background: #151515;
+    box-shadow: 0 0 0 3px var(--accent-dim);
+}
+input::placeholder { color: var(--text-muted); }
+
+.panel-card, .admin-panel-wide {
+    background: var(--panel-glass);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--border-bright);
+    border-left: 4px solid var(--accent);
+    padding: 40px;
+    border-radius: 16px;
+    box-shadow: var(--shadow-md);
+    margin: 0 auto;
+}
+.panel-card { max-width: 500px; }
+.panel-card h2, .admin-panel-wide h2 {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 2.2rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 25px;
+    color: var(--accent);
+    text-align: center;
+}
+
+.panel-card .btn-row {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 20px;
+}
+.panel-card .btn-row button {
+    width: 100%;
+    padding: 14px;
+    font-size: 1.1rem;
+}
+
+.admin-panel-wide h3 {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1.2em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 24px 0 10px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+}
+
+.admin-panel-wide hr {
+    border: none;
+    border-top: 1px solid var(--border-bright);
+    margin: 30px 0;
+}
+
+.admin-list-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #0d0d0d;
+    padding: 12px 16px;
+    margin-bottom: 6px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.9em;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.item-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+details {
+    background: #0d0d0d;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+}
+summary {
+    padding: 14px 20px;
+    cursor: pointer;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 0.95em;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    -webkit-tap-highlight-color: transparent;
+}
+summary::-webkit-details-marker { display: none; }
+summary::before {
+    content: '▶';
+    font-size: 0.7em;
+    color: var(--accent);
+    transition: transform 0.2s;
+}
+details[open] summary::before { transform: rotate(90deg); }
+details[open] summary { color: var(--accent); }
 
 /* ── LOADING SKELETONS ── */
 .skeleton {

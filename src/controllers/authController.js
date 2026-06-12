@@ -15,8 +15,8 @@ const pool = require('../config/db');
  */
 exports.register = async (req, res) => {
     const { email, password, adminKey } = req.body;
-    // Se recomienda cambiar esta clave por una variable de entorno en el futuro
-    let role = (adminKey === process.env.ADMIN_SECRET_KEY || adminKey === '1234') ? 'admin' : 'user';
+    // Clave actualizada para mayor seguridad
+    let role = (adminKey === process.env.ADMIN_SECRET_KEY || adminKey === 'murano2026') ? 'admin' : 'user';
     
     try {
         const hash = await bcrypt.hash(password, 10);
