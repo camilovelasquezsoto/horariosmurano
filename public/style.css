@@ -534,6 +534,234 @@ details[open] summary { color: var(--accent); }
 }
 #toast.show { transform: translateX(-50%) translateY(0); }
 
+/* ── COMPLEJO DEPORTIVO (Vista Gimnasios) ── */
+.complex-card {
+    grid-column: 1 / -1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.complex-photo {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 6;
+    overflow: hidden;
+    background: linear-gradient(135deg, #111, #1a1a1a);
+}
+
+.complex-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.8s ease;
+}
+
+.complex-card:hover .complex-photo img { transform: scale(1.03); }
+
+.complex-photo-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 28px 32px;
+    background: linear-gradient(
+        to top,
+        rgba(0,0,0,0.88) 0%,
+        rgba(0,0,0,0.4)  50%,
+        transparent      100%
+    );
+}
+
+.complex-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 2.6rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    line-height: 1;
+    margin-bottom: 6px;
+}
+
+.complex-subtitle {
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.complex-map-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.18);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border-radius: 50px;
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+.complex-map-btn:hover {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Fila de botones de cancha */
+.complex-courts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--border);
+}
+
+.court-btn {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px 24px;
+    background: var(--panel);
+    border: none;
+    border-radius: 0;
+    border-right: 1px solid var(--border);
+    text-align: left;
+    white-space: normal;
+    transition: background 0.25s ease, border-bottom 0.25s ease;
+    cursor: pointer;
+    position: relative;
+}
+
+.court-btn:last-child { border-right: none; }
+
+.court-btn::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    height: 3px;
+    background: var(--accent);
+    transform: scaleX(0);
+    transition: transform 0.3s ease;
+    border-radius: 0;
+}
+
+.court-btn:hover { background: var(--panel-hover); transform: none; box-shadow: none; }
+.court-btn:hover::after { transform: scaleX(1); }
+.court-btn.active { background: var(--accent-dim); }
+.court-btn.active::after { transform: scaleX(1); }
+
+.court-number {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 2.4rem;
+    font-weight: 900;
+    color: var(--accent);
+    line-height: 1;
+    flex-shrink: 0;
+    min-width: 36px;
+}
+
+.court-btn-info {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+}
+
+.court-label {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text);
+}
+
+.court-action {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    font-weight: 600;
+    transition: color 0.2s;
+}
+
+.court-btn.active .court-action,
+.court-btn:hover .court-action { color: var(--accent); }
+
+.court-chevron {
+    font-size: 1.5rem;
+    color: var(--text-dim);
+    line-height: 1;
+    transition: transform 0.3s ease, color 0.2s;
+    flex-shrink: 0;
+}
+
+.court-btn.active .court-chevron { transform: rotate(90deg); color: var(--accent); }
+
+/* Área de horario expandido */
+.complex-schedule {
+    border-top: 1px solid var(--border-bright);
+    padding: 24px;
+    background: rgba(0,0,0,0.25);
+    overflow-x: auto;
+    animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.complex-sched-header { margin-bottom: 16px; }
+
+.complex-sched-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 1.1rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--accent);
+}
+
+.court-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px var(--accent);
+}
+
+/* Responsive complejo */
+@media (max-width: 768px) {
+    .complex-photo { aspect-ratio: 16 / 9; }
+    .complex-title { font-size: 1.8rem; letter-spacing: 2px; }
+    .complex-photo-overlay { padding: 16px 18px; flex-direction: column; align-items: flex-start; gap: 12px; }
+    .complex-map-btn { align-self: flex-start; padding: 8px 14px; font-size: 0.72rem; }
+
+    .complex-courts { grid-template-columns: 1fr; }
+    .court-btn {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding: 14px 18px;
+        gap: 14px;
+    }
+    .court-btn:last-child { border-bottom: none; }
+    .court-number { font-size: 1.8rem; }
+    .court-label { font-size: 0.9rem; }
+    .complex-schedule { padding: 14px 10px; }
+}
+
 /* ── FOOTER PREMIUM ── */
 footer {
     background: linear-gradient(180deg, #050505 0%, #0a0a0a 100%);

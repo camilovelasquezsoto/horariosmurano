@@ -89,6 +89,13 @@ async function renderList(type) {
             return;
         }
 
+        // Renderizado especial para el complejo de canchas
+        if (type === 'gym') {
+            document.getElementById('global-map-wrapper').classList.add('hidden');
+            renderGymComplex(data);
+            return;
+        }
+
         // Lógica del Mapa Global
         const mapWrapper = document.getElementById('global-map-wrapper');
         const mapContainer = document.getElementById('global-map-container');
@@ -152,6 +159,103 @@ async function renderList(type) {
                 <button onclick="renderList('${type}')" style="margin-top:20px;">Reintentar</button>
             </div>
         `;
+    }
+}
+
+/**
+ * --- COMPLEJO DE CANCHAS ---
+ * Renderiza una sola tarjeta panorámica con foto compartida
+ * y botones individuales por cancha.
+ */
+function renderGymComplex(gyms) {
+    const container = document.getElementById('list-container');
+    const sharedImage = gyms[0]?.image_url || '';
+    const sharedAddress = gyms[0]?.address || '';
+    const mapUrl = sharedAddress ? buildMapUrl(sharedAddress) : null;
+
+    const courtButtons = gyms.map(gym => {
+        const courtNum = gym.name.split(' - ')[0]; // "Cancha 1"
+        const key = safeKey(gym.id);
+        return `
+        <button class="court-btn" id="court-btn-${key}"
+            onclick="toggleGymSchedule(this, ${gym.id}, '${escQ(courtNum)}', '${key}')">
+            <span class="court-number">${courtNum.replace(/\D/g, '')}</span>
+            <div class="court-btn-info">
+                <span class="court-label">${courtNum}</span>
+                <span class="court-action">Ver Horarios</span>
+            </div>
+            <span class="court-chevron">›</span>
+        </button>`;
+    }).join('');
+
+    container.innerHTML = `
+    <div class="complex-card" id="complex-card">
+        <div class="complex-photo">
+            <img src="${sharedImage}"
+                 onerror="this.style.background='linear-gradient(135deg,#111,#1a1a1a)'"
+                 alt="Centro Deportivo Murano" loading="lazy">
+            <div class="complex-photo-overlay">
+                <div>
+                    <h2 class="complex-title">Centro Deportivo</h2>
+                    <p class="complex-subtitle">Puerto Montt &nbsp;·&nbsp; 3 Canchas</p>
+                </div>
+                ${mapUrl ? `
+                <a href="${sharedAddress}" target="_blank" rel="noopener" class="complex-map-btn">
+                    🗺️ Ver Mapa
+                </a>` : ''}
+            </div>
+        </div>
+        <div class="complex-courts">
+            ${courtButtons}
+        </div>
+        <div class="complex-schedule hidden" id="complex-schedule">
+            <div class="complex-sched-header" id="complex-sched-header"></div>
+            <div id="complex-sched-content"></div>
+        </div>
+    </div>`;
+}
+
+async function toggleGymSchedule(btn, gymId, gymName, key) {
+    const schedule   = document.getElementById('complex-schedule');
+    const header     = document.getElementById('complex-sched-header');
+    const content    = document.getElementById('complex-sched-content');
+    const isOpen     = btn.classList.contains('active');
+
+    // Desactivar todos los botones
+    document.querySelectorAll('.court-btn').forEach(b => {
+        b.classList.remove('active');
+        b.querySelector('.court-action').textContent = 'Ver Horarios';
+        b.querySelector('.court-chevron').textContent = '›';
+    });
+
+    // Si era el mismo abierto, cierra
+    if (isOpen) {
+        schedule.classList.add('hidden');
+        return;
+    }
+
+    // Indicar carga
+    btn.querySelector('.court-action').textContent = 'Cargando...';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/trainings/by-gym/${gymId}`);
+        const trs = await res.json();
+
+        header.innerHTML = `
+            <div class="complex-sched-title">
+                <span class="court-dot"></span>${gymName}
+            </div>`;
+        content.innerHTML = generateGridHTML(trs);
+        schedule.classList.remove('hidden');
+
+        btn.classList.add('active');
+        btn.querySelector('.court-action').textContent = 'Ocultar';
+        btn.querySelector('.court-chevron').textContent = '∨';
+
+        schedule.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } catch (e) {
+        btn.querySelector('.court-action').textContent = 'Ver Horarios';
+        toast('Error al obtener horarios');
     }
 }
 
