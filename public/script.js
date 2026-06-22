@@ -13,6 +13,59 @@ const timeMap = {
     "22:00": "22:00–23:30"
 };
 
+// Imagen por defecto cuando no hay foto (logo del club)
+const DEFAULT_IMAGE = '/logo.png';
+
+// Descripciones y rangos de edad por categoría
+const CATEGORY_DESCRIPTIONS = {
+    'Tc varones':  'Técnica Competitiva · 18+ años',
+    'Tc damas':    'Técnica Competitiva · 18+ años',
+    'U18 DAMAS':   'Sub 18 · Nacidas 2008 – 2010',
+    'U18 VARONES': 'Sub 18 · Nacidos 2008 – 2010',
+    'U16 A DAMAS': 'Sub 16 · Nacidas 2010 – 2012',
+    'U16 B DAMAS': 'Sub 16 · Nacidas 2010 – 2012',
+    'U16 VARONES': 'Sub 16 · Nacidos 2010 – 2012',
+    'U14 DAMAS':   'Sub 14 · Nacidas 2012 – 2014',
+    'U14 B DAMAS': 'Sub 14 · Nacidas 2012 – 2014',
+    'U14 VARONES': 'Sub 14 · Nacidos 2012 – 2014',
+    'U12 DAMAS':   'Sub 12 · Nacidas 2014 – 2016',
+    'Mini Voley':  'Mini Voley · Nacidos 2016 en adelante'
+};
+
+/** Simplifica "Cancha 1 - Centro Deportivo" → "Cancha 1" */
+function simplifyGymName(name) {
+    return name ? name.split(' - ')[0] : '';
+}
+
+/** Badge de género/tipo para tarjetas de categoría */
+function getCategoryBadge(name) {
+    const n = (name || '').toUpperCase();
+    if (n.includes('MINI'))            return '<span class="cat-badge badge-mini">🏐 Mini Voley</span>';
+    if (n.startsWith('TC') && n.includes('DAMA'))  return '<span class="cat-badge badge-damas">🏆 TC · Damas</span>';
+    if (n.startsWith('TC') && n.includes('VARON')) return '<span class="cat-badge badge-varones">🏆 TC · Varones</span>';
+    if (n.includes('DAMA'))            return '<span class="cat-badge badge-damas">♀ Damas</span>';
+    if (n.includes('VARON'))           return '<span class="cat-badge badge-varones">♂ Varones</span>';
+    return '';
+}
+
+/** Detecta género para atributo data-gender */
+function getCategoryGender(name) {
+    const n = (name || '').toUpperCase();
+    if (n.includes('MINI'))  return 'mini';
+    if (n.includes('DAMA'))  return 'damas';
+    if (n.includes('VARON')) return 'varones';
+    return 'all';
+}
+
+/** Filtra tarjetas de categoría por género */
+function filterCategories(gender, btn) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.card[data-gender]').forEach(card => {
+        card.style.display = (gender === 'all' || card.dataset.gender === gender) ? '' : 'none';
+    });
+}
+
 /**
  * --- UTILIDADES ---
  */
@@ -118,28 +171,44 @@ async function renderList(type) {
             mapWrapper.classList.add('hidden');
         }
 
-        container.innerHTML = data.map(item => {
-            const key = safeKey(item.id || item.name);
-            const rawId = type === 'trainer' ? item.name : item.id;
+        // Barra de filtros solo para categorías
+        const filterBar = type === 'cat' ? `
+        <div class="filter-bar" style="grid-column:1/-1">
+            <span class="filter-label">Filtrar:</span>
+            <button class="filter-btn active" onclick="filterCategories('all', this)">Todos</button>
+            <button class="filter-btn" onclick="filterCategories('damas', this)">♀ Damas</button>
+            <button class="filter-btn" onclick="filterCategories('varones', this)">♂ Varones</button>
+            <button class="filter-btn" onclick="filterCategories('mini', this)">🏐 Mini</button>
+        </div>` : '';
+
+        container.innerHTML = filterBar + data.map(item => {
+            const key    = safeKey(item.id || item.name);
+            const rawId  = type === 'trainer' ? item.name : item.id;
+            const imgSrc = item.image_url || item.trainer_image_url || DEFAULT_IMAGE;
+            const badge  = type === 'cat' ? getCategoryBadge(item.name) : '';
+            const desc   = type === 'cat' ? (CATEGORY_DESCRIPTIONS[item.name] || '') : '';
+            const gender = type === 'cat' ? getCategoryGender(item.name) : 'all';
 
             return `
-            <div class="card" id="card-wrapper-${key}">
+            <div class="card" id="card-wrapper-${key}" data-gender="${gender}">
                 <div class="card-inner">
                     <div class="card-info">
                         <div class="img-box">
-                            <img src="${item.image_url || 'https://via.placeholder.com/300x300/111111/FF5722?text=+'}"
-                                 onerror="this.src='https://via.placeholder.com/300x300/111111/FF5722?text=+'"
+                            <img src="${imgSrc}"
+                                 onerror="this.src='${DEFAULT_IMAGE}'"
                                  loading="lazy">
                         </div>
                         <div class="card-text-group">
+                            ${badge ? `<div class="cat-badge-wrapper">${badge}</div>` : ''}
                             <h3>${item.name}</h3>
+                            ${desc ? `<p class="cat-description">${desc}</p>` : ''}
                             <button class="primary" onclick="toggleSchedule(this, '${type}', '${escQ(String(rawId))}', '${key}')"
-                                    style="width:100%; margin-top:15px;">
+                                    style="width:100%; margin-top:12px;">
                                 Ver Horarios
                             </button>
                             ${type === 'cat' && localStorage.getItem('user_id') ? `
                             <button onclick="saveCategoryFavs(${item.id})" style="width:100%; margin-top:8px; padding:10px; background:transparent; border:1px solid #444; color:var(--text-muted); font-size:0.8rem; display:flex; justify-content:center; align-items:center; gap:5px;">
-                                ⭐ Guardar Categoría Completa
+                                ⭐ Guardar Categoría
                             </button>
                             ` : ''}
                         </div>
@@ -245,7 +314,7 @@ async function toggleGymSchedule(btn, gymId, gymName, key) {
             <div class="complex-sched-title">
                 <span class="court-dot"></span>${gymName}
             </div>`;
-        content.innerHTML = generateGridHTML(trs);
+        content.innerHTML = generateGridHTML(trs, 'gym');
         schedule.classList.remove('hidden');
 
         btn.classList.add('active');
@@ -280,7 +349,7 @@ async function toggleSchedule(btn, type, id, wrapperKey) {
         const res = await fetch(`${API_BASE_URL}${url}`);
         const trs = await res.json();
         
-        container.innerHTML = generateGridHTML(trs);
+        container.innerHTML = generateGridHTML(trs, type);
         container.classList.remove('hidden');
         if (map) map.classList.remove('hidden');
         
@@ -295,39 +364,7 @@ async function toggleSchedule(btn, type, id, wrapperKey) {
     }
 }
 
-function generateGridHTML(trs) {
-    let html = `<div class="schedule-grid">`;
-    html += `<div class="cell header">Hora</div>`;
-    days.forEach(d => html += `<div class="cell header">${d}</div>`);
-    
-    timeSlots.forEach(slot => {
-        html += `<div class="cell time-label">${timeMap[slot]}</div>`;
-        days.forEach(d => {
-            const matches = trs.filter(t => t.day_of_week === d && t.start_time === slot);
-            html += `<div class="cell">${matches.map(t => renderEventCard(t)).join('')}</div>`;
-        });
-    });
-    return html + `</div>`;
-}
-
-function renderEventCard(t) {
-    const titulo = t.category_name || t.gym_name || "Entrenamiento";
-    const isAdmin = localStorage.getItem('role') === 'admin';
-    return `
-        <div class="event-card">
-            <div class="ev-title">${titulo}</div>
-            <div class="ev-trainer">${t.trainer_name || 'Sin profesor'}</div>
-            <div class="ev-actions" style="margin-top:5px; display:flex; flex-wrap:wrap; gap:5px;">
-                <button onclick="toggleFav(${t.id})" title="Añadir/Quitar de Favoritos" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.3); border:1px solid #444; color:white; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
-                    ⭐ Fav
-                </button>
-                ${isAdmin ? `
-                <button onclick="deleteTraining(${t.id})" title="Borrar este bloque del sistema" style="padding:4px 8px; font-size:0.7rem; background:rgba(255,23,68,0.2); border:1px solid var(--danger); color:var(--danger); cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
-                    ✕ Borrar Clase
-                </button>` : ''}
-            </div>
-        </div>`;
-}
+// (funciones generateGridHTML y renderEventCard definidas más abajo — versiones con viewType)
 
 /**
  * --- ADMINISTRACIÓN ---
@@ -577,42 +614,70 @@ async function saveCategoryFavs(categoryId) {
     }
 }
 
-function renderEventCard(t, isFavView = false) {
-    const titulo = t.category_name || t.gym_name || "Entrenamiento";
-    const isAdmin = localStorage.getItem('role') === 'admin';
+/**
+ * Renderiza un bloque de evento en la grilla de horarios.
+ * viewType: 'gym' | 'cat' | 'trainer' | 'fav'
+ *   - 'gym'     → muestra categoría + profe
+ *   - 'cat'     → muestra cancha + profe
+ *   - 'trainer' → muestra categoría + cancha (elimina nombre redundante del profe)
+ *   - 'fav'     → muestra categoría + cancha
+ */
+function renderEventCard(t, viewType = 'gym') {
+    const isAdmin  = localStorage.getItem('role') === 'admin';
+    const isFav    = viewType === 'fav';
+    const gymShort = simplifyGymName(t.gym_name);
+
+    let titulo, subtitulo;
+    switch (viewType) {
+        case 'trainer':
+            titulo    = t.category_name || 'Entrenamiento';
+            subtitulo = gymShort ? `🏟 ${gymShort}` : '';
+            break;
+        case 'cat':
+            titulo    = gymShort || 'Cancha';
+            subtitulo = t.trainer_name || 'Sin profesor';
+            break;
+        case 'fav':
+            titulo    = t.category_name || 'Entrenamiento';
+            subtitulo = gymShort ? `🏟 ${gymShort}` : (t.trainer_name || '');
+            break;
+        default: // 'gym'
+            titulo    = t.category_name || 'Entrenamiento';
+            subtitulo = t.trainer_name || 'Sin profesor';
+    }
+
     return `
         <div class="event-card">
             <div class="ev-title">${titulo}</div>
-            <div class="ev-trainer">${t.trainer_name || 'Sin profesor'}</div>
-            <div class="ev-actions" style="margin-top:5px; display:flex; flex-wrap:wrap; gap:5px;">
-                ${isFavView ? `
-                <button onclick="toggleFav(${t.id})" title="Eliminar de Favoritos" style="padding:4px 8px; font-size:0.7rem; background:rgba(255,255,255,0.1); border:1px solid #666; color:#ccc; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
-                    🗑️ Quitar
+            ${subtitulo ? `<div class="ev-trainer">${subtitulo}</div>` : ''}
+            <div class="ev-actions">
+                <button onclick="toggleFav(${t.id})" class="ev-btn${isFav ? ' ev-btn-danger' : ''}" title="${isFav ? 'Quitar de Favoritos' : 'Guardar en Favoritos'}">
+                    ${isFav ? '🗑️' : '⭐'}
                 </button>
-                ` : `
-                <button onclick="toggleFav(${t.id})" title="Añadir/Quitar de Favoritos" style="padding:4px 8px; font-size:0.7rem; background:rgba(0,0,0,0.3); border:1px solid #444; color:white; cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
-                    ⭐ Fav
-                </button>
-                `}
-                
-                ${isAdmin ? `
-                <button onclick="deleteTraining(${t.id})" title="Borrar este bloque del sistema" style="padding:4px 8px; font-size:0.7rem; background:rgba(255,23,68,0.2); border:1px solid var(--danger); color:var(--danger); cursor:pointer; border-radius:4px; display:flex; align-items:center; gap:4px;">
-                    ✕ Borrar Clase
-                </button>` : ''}
+                ${isAdmin ? `<button onclick="deleteTraining(${t.id})" class="ev-btn ev-btn-danger" title="Borrar clase">✕</button>` : ''}
             </div>
         </div>`;
 }
 
-function generateGridHTML(trs, isFavView = false) {
+function generateGridHTML(trs, viewType = 'gym') {
+    // Estado vacío: sin horarios definidos aún
+    if (!trs || trs.length === 0) {
+        return `<div class="empty-schedule">
+            <span class="empty-icon">🏐</span>
+            <p class="empty-title">Horarios próximamente</p>
+            <p class="empty-sub">Los entrenamientos de esta categoría aún no tienen horario asignado.</p>
+        </div>`;
+    }
+
     let html = `<div class="schedule-grid">`;
     html += `<div class="cell header">Hora</div>`;
-    days.forEach(d => html += `<div class="cell header">${d}</div>`);
-    
+    days.forEach(d => html += `<div class="cell header">${d.substring(0,3)}</div>`);
+
     timeSlots.forEach(slot => {
         html += `<div class="cell time-label">${timeMap[slot]}</div>`;
         days.forEach(d => {
             const matches = trs.filter(t => t.day_of_week === d && t.start_time === slot);
-            html += `<div class="cell">${matches.map(t => renderEventCard(t, isFavView)).join('')}</div>`;
+            html += `<div class="cell">${matches.map(t => renderEventCard(t, viewType)).join('')}</div>`;
         });
     });
     return html + `</div>`;
@@ -629,7 +694,7 @@ async function renderFavorites() {
         document.getElementById('list-container').innerHTML = `
             <div class="favs-wrapper" style="grid-column: 1 / -1;">
                 <h2 style="font-family:'Barlow Condensed'; font-size:2rem; margin-bottom:20px; color:var(--accent);">⭐ Mis Favoritos</h2>
-                ${trs.length === 0 ? '<p>No tienes favoritos.</p>' : generateGridHTML(trs, true)}
+                ${trs.length === 0 ? '<p style="color:var(--text-dim)">No tienes favoritos guardados aún.</p>' : generateGridHTML(trs, 'fav')}
             </div>`;
     } catch (e) { toast('Error al cargar favoritos'); }
 }

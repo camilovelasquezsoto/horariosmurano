@@ -36,9 +36,11 @@ exports.getTrainingsByGym = async (req, res) => {
         const q = `
             SELECT t.id, t.gym_id, t.category_id, t.day_of_week, 
                    TO_CHAR(t.start_time, 'HH24:MI') as start_time, 
-                   c.name as category_name, c.trainer_name 
+                   c.name as category_name, c.trainer_name,
+                   g.name as gym_name
             FROM trainings t 
-            JOIN categories c ON t.category_id = c.id 
+            JOIN categories c ON t.category_id = c.id
+            JOIN gyms g ON t.gym_id = g.id
             WHERE t.gym_id = $1`;
         const result = await pool.query(q, [req.params.id]);
         res.json(result.rows);
