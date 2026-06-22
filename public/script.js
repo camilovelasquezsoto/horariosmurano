@@ -269,10 +269,10 @@ function renderGymComplex(gyms) {
         <div class="complex-photo">
             <img src="${sharedImage}"
                  onerror="this.style.background='linear-gradient(135deg,#111,#1a1a1a)'"
-                 alt="Centro Deportivo Murano" loading="lazy">
+                 alt="Centro Deportivo Austral" loading="lazy">
             <div class="complex-photo-overlay">
                 <div>
-                    <h2 class="complex-title">Centro Deportivo</h2>
+                    <h2 class="complex-title">Centro Deportivo Austral</h2>
                     <p class="complex-subtitle">Puerto Montt &nbsp;·&nbsp; 3 Canchas</p>
                 </div>
                 ${mapUrl ? `
