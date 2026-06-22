@@ -13,8 +13,11 @@ const timeMap = {
     "22:00": "22:00–23:30"
 };
 
-// Imagen por defecto cuando no hay foto (logo del club)
-const DEFAULT_IMAGE = '/logo.png';
+// Imágenes por defecto cuando no hay foto
+const DEFAULT_IMAGE          = '/logomurano.png';                                    // fallback global
+const DEFAULT_IMAGE_CAT      = '/fotos_categorias/imagenpredeterminada.png';         // categorías sin foto
+const DEFAULT_IMAGE_TRAINER  = '/profesores/fotopredeterminadaprofe.png';            // entrenadores sin foto
+
 
 // Descripciones y rangos de edad por categoría
 const CATEGORY_DESCRIPTIONS = {
@@ -184,7 +187,11 @@ async function renderList(type) {
         container.innerHTML = filterBar + data.map(item => {
             const key    = safeKey(item.id || item.name);
             const rawId  = type === 'trainer' ? item.name : item.id;
-            const imgSrc = item.image_url || item.trainer_image_url || DEFAULT_IMAGE;
+            const imgSrc = type === 'cat'
+                ? (item.image_url || DEFAULT_IMAGE_CAT)
+                : type === 'trainer'
+                    ? (item.trainer_image_url || item.image_url || DEFAULT_IMAGE_TRAINER)
+                    : (item.image_url || DEFAULT_IMAGE);
             const badge  = type === 'cat' ? getCategoryBadge(item.name) : '';
             const desc   = type === 'cat' ? (CATEGORY_DESCRIPTIONS[item.name] || '') : '';
             const gender = type === 'cat' ? getCategoryGender(item.name) : 'all';
