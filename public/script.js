@@ -406,12 +406,25 @@ async function loadAdminPanel() {
                 <summary>Gestionar Categorías (${cats.length})</summary>
                 ${cats.map(c => `
                 <div class="admin-list-item">
-                    <span>${c.name} - ${c.trainer_name}</span>
+                    <span>${c.name} — ${c.trainer_name || 'Sin profesor'}</span>
                     <div class="item-actions">
                         <button onclick="deleteData('categories', ${c.id})">Borrar</button>
                     </div>
                 </div>`).join('')}
             </details>`;
+
+        document.getElementById('manage-trainers').innerHTML = `
+            <details>
+                <summary>Gestionar Profesores (${trainers.length})</summary>
+                ${trainers.map(t => `
+                <div class="admin-list-item">
+                    <span>${t.name}</span>
+                    <div class="item-actions">
+                        <button onclick="deleteTrainer('${escQ(t.name)}')">Desvincular</button>
+                    </div>
+                </div>`).join('')}
+            </details>`;
+
     } catch (e) { toast('Error al cargar panel'); }
 }
 
@@ -437,8 +450,50 @@ async function deleteTraining(id) {
     setTimeout(() => location.reload(), 800);
 }
 
+async function saveGym() {
+    const name      = document.getElementById('g_name').value.trim();
+    const address   = document.getElementById('g_address').value.trim();
+    const image_url = document.getElementById('g_img').value.trim();
+    if (!name) return toast('El nombre es obligatorio');
+    try {
+        const res = await fetch(`${API_BASE_URL}/gyms`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ name, address, image_url })
+        });
+        if (res.ok) { toast('✅ Cancha guardada'); loadAdminPanel(); }
+        else toast('Error al guardar la cancha');
+    } catch (e) { toast('Error de red'); }
+}
+
+async function saveCat() {
+    const name               = document.getElementById('cat_name').value.trim();
+    const trainer_name       = document.getElementById('trainer_name').value.trim();
+    const image_url          = document.getElementById('cat_img').value.trim();
+    const trainer_image_url  = document.getElementById('trainer_img').value.trim();
+    if (!name) return toast('El nombre es obligatorio');
+    try {
+        const res = await fetch(`${API_BASE_URL}/categories`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ name, trainer_name, image_url, trainer_image_url })
+        });
+        if (res.ok) { toast('✅ Categoría guardada'); loadAdminPanel(); }
+        else toast('Error al guardar la categoría');
+    } catch (e) { toast('Error de red'); }
+}
+
+async function deleteTrainer(name) {
+    if (!confirm(`¿Desvincular al entrenador "${name}" de todas las categorías?`)) return;
+    try {
+        await fetch(`${API_BASE_URL}/trainers/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        toast('Entrenador desvinculado');
+        loadAdminPanel();
+    } catch (e) { toast('Error al desvincular'); }
+}
+
 async function deleteData(type, id) {
-    if (!confirm("¿Seguro que deseas eliminar?")) return;
+    if (!confirm('¿Seguro que deseas eliminar?')) return;
     await fetch(`${API_BASE_URL}/${type}/${id}`, { method: 'DELETE' });
     loadAdminPanel();
 }
