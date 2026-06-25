@@ -69,6 +69,22 @@ function filterCategories(gender, btn) {
     });
 }
 
+/** Clase CSS de color según género del evento */
+function getEventGenderClass(categoryName) {
+    const n = (categoryName || '').toUpperCase();
+    if (n.includes('MINI'))  return 'ev-mini';
+    if (n.includes('DAMA'))  return 'ev-damas';
+    if (n.includes('VARON')) return 'ev-varones';
+    return '';
+}
+
+/** Marca el botón activo en el nav inferior móvil */
+function setMobileNav(activeId) {
+    document.querySelectorAll('.mob-nav-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(activeId);
+    if (btn) btn.classList.add('active');
+}
+
 /**
  * --- UTILIDADES ---
  */
@@ -187,6 +203,9 @@ async function renderList(type) {
         container.innerHTML = filterBar + data.map(item => {
             const key    = safeKey(item.id || item.name);
             const rawId  = type === 'trainer' ? item.name : item.id;
+            const fallbackImg = type === 'cat' ? DEFAULT_IMAGE_CAT
+                : type === 'trainer' ? DEFAULT_IMAGE_TRAINER
+                : DEFAULT_IMAGE;
             const imgSrc = type === 'cat'
                 ? (item.image_url || DEFAULT_IMAGE_CAT)
                 : type === 'trainer'
@@ -202,12 +221,15 @@ async function renderList(type) {
                     <div class="card-info">
                         <div class="img-box">
                             <img src="${imgSrc}"
-                                 onerror="this.src='${DEFAULT_IMAGE}'"
+                                 onerror="this.src='${fallbackImg}'"
                                  loading="lazy">
+                            <div class="img-overlay">
+                                <span class="img-overlay-name">${item.name}</span>
+                            </div>
                         </div>
                         <div class="card-text-group">
                             ${badge ? `<div class="cat-badge-wrapper">${badge}</div>` : ''}
-                            <h3>${item.name}</h3>
+                            <h3 class="card-title-mobile">${item.name}</h3>
                             ${desc ? `<p class="cat-description">${desc}</p>` : ''}
                             <button class="primary" onclick="toggleSchedule(this, '${type}', '${escQ(String(rawId))}', '${key}')"
                                     style="width:100%; margin-top:12px;">
@@ -224,6 +246,22 @@ async function renderList(type) {
                 </div>
             </div>`;
         }).join('');
+
+        // Animación escalonada de entrada
+        requestAnimationFrame(() => {
+            document.querySelectorAll('#list-container .card').forEach((card, i) => {
+                card.style.opacity = '0';
+                card.style.animation = 'none';
+                setTimeout(() => {
+                    card.style.animation = `slideUp 0.45s cubic-bezier(0.16,1,0.3,1) ${i * 0.055}s both`;
+                }, 16);
+            });
+        });
+
+        // Estado activo en nav superior
+        document.querySelectorAll('.nav-bar button').forEach(b => b.classList.remove('active'));
+        const activeNavBtn = document.querySelector(`.nav-bar button[onclick*="'${type}'"]`);
+        if (activeNavBtn) activeNavBtn.classList.add('active');
     } catch (e) {
         console.error(e);
         const container = document.getElementById('list-container');
@@ -685,9 +723,10 @@ async function saveCategoryFavs(categoryId) {
  *   - 'fav'     → muestra categoría + cancha
  */
 function renderEventCard(t, viewType = 'gym') {
-    const isAdmin  = localStorage.getItem('role') === 'admin';
-    const isFav    = viewType === 'fav';
-    const gymShort = simplifyGymName(t.gym_name);
+    const isAdmin     = localStorage.getItem('role') === 'admin';
+    const isFav       = viewType === 'fav';
+    const gymShort    = simplifyGymName(t.gym_name);
+    const genderClass = getEventGenderClass(t.category_name);
 
     let titulo, subtitulo;
     switch (viewType) {
@@ -709,7 +748,7 @@ function renderEventCard(t, viewType = 'gym') {
     }
 
     return `
-        <div class="event-card">
+        <div class="event-card ${genderClass}">
             <div class="ev-title">${titulo}</div>
             ${subtitulo ? `<div class="ev-trainer">${subtitulo}</div>` : ''}
             <div class="ev-actions">

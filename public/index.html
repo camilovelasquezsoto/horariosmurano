@@ -163,6 +163,27 @@
     </div>
 </footer>
 
+
+<!-- NAVEGACIÓN INFERIOR MÓVIL -->
+<nav class="mobile-bottom-nav" id="mobile-nav">
+    <button class="mob-nav-btn" id="mob-canchas" onclick="renderList('gym'); setMobileNav('mob-canchas')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M1 22V9L12 2l11 7v13h-7v-7h-4v7Z"/></svg>
+        <span>Canchas</span>
+    </button>
+    <button class="mob-nav-btn" id="mob-categorias" onclick="renderList('cat'); setMobileNav('mob-categorias')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+        <span>Categorías</span>
+    </button>
+    <button class="mob-nav-btn" id="mob-profes" onclick="renderList('trainer'); setMobileNav('mob-profes')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+        <span>Profes</span>
+    </button>
+    <button class="mob-nav-btn" id="mob-favs" onclick="renderFavorites(); setMobileNav('mob-favs')">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+        <span>Favoritos</span>
+    </button>
+</nav>
+
 <!-- Lógica Modularizada -->
 <script>document.getElementById('current-year').textContent = new Date().getFullYear();</script>
 <script src="script.js"></script>
