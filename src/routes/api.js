@@ -12,6 +12,9 @@ const router = express.Router();
 const authController = require('../controllers/authController');
 const dataController = require('../controllers/dataController');
 const trainingController = require('../controllers/trainingController');
+const financeController = require('../controllers/financeController');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 /**
  * --- RUTAS DE AUTENTICACIÓN ---
@@ -55,5 +58,43 @@ router.get('/trainings/by-trainer/:name', trainingController.getTrainingsByTrain
  */
 router.post('/toggle-favorite', trainingController.toggleFavorite);
 router.get('/favorites/:user_id', trainingController.getFavoritesByUser);
+
+/**
+ * --- RUTAS DE FINANZAS Y PAGOS ---
+ */
+router.get('/finance/athletes', financeController.getAthletes);
+router.post('/finance/athletes', financeController.createAthlete);
+router.put('/finance/athletes/:id', financeController.updateAthlete);
+router.delete('/finance/athletes/:id', financeController.deleteAthlete);
+
+router.post('/finance/athletes/ruts', financeController.addPayerRut);
+router.delete('/finance/athletes/ruts/:id', financeController.removePayerRut);
+
+router.post('/finance/cartola/upload', upload.single('cartola'), financeController.processCartola);
+router.post('/finance/cartola/process', financeController.processCartola);
+
+router.get('/finance/movements', financeController.getMovements);
+router.post('/finance/movements/assign', financeController.assignMovement);
+router.put('/finance/movements/:id', financeController.updateMovement);
+router.post('/finance/movements/split', financeController.splitMovement);
+
+router.get('/finance/summary', financeController.getSummary);
+router.post('/finance/payments/manual', financeController.registerManualPayment);
+
+// Rutas de gestión histórica, respaldo y optimización de base de datos
+router.get('/finance/archive/export', financeController.exportMonthlyArchive);
+router.post('/finance/archive/purge', financeController.purgeMonthlyMovements);
+router.post('/finance/archive/restore', financeController.restoreMonthlyArchive);
+router.get('/finance/archive/stats', financeController.getArchiveStats);
+
+// Rutas de Egresos y Gastos
+router.get('/finance/expenses', financeController.getExpenses);
+router.post('/finance/expenses', financeController.createExpense);
+router.put('/finance/expenses/:id', financeController.updateExpense);
+router.delete('/finance/expenses/:id', financeController.deleteExpense);
+
+// Sincronización e Importación de datos desde Bayes
+router.post('/finance/athletes/import-bayes', financeController.importBayesData);
+router.post('/finance/bayes/import', financeController.importBayesData);
 
 module.exports = router;

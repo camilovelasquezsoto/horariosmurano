@@ -11,6 +11,8 @@
     
     <!-- Estilos Modularizados -->
     <link rel="stylesheet" href="style.css">
+    <!-- SheetJS para procesamiento ultrarrápido y seguro de cartolas Excel en el navegador -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -41,6 +43,7 @@
             <button onclick="renderList('cat')">Categorías</button>
             <button onclick="renderList('trainer')">Profesores</button>
             <button style="border-color:var(--success); color:var(--success);" onclick="renderFavorites()">⭐ Favoritos</button>
+            <button style="border-color:var(--accent); color:var(--accent); font-weight:700;" onclick="openFinanceModule()">💰 Pagos y Cobranzas</button>
         </div>
         
         <!-- Mapa Global para Gimnasios -->
@@ -126,6 +129,1097 @@
         <div id="manage-trainers"></div>
     </div>
 
+    <!-- VISTA FINANZAS: Pagos, Cobranzas y Conciliación Bancaria -->
+    <div id="finance-view" class="finance-wrap view-anim hidden">
+        <!-- Header -->
+        <div class="finance-header-bar">
+            <div class="finance-title-box">
+                <h1>💰 Pagos y Cobranzas</h1>
+                <p>Gestión de mensualidades, nómina de deportistas y conciliación bancaria</p>
+            </div>
+            <div class="finance-controls">
+                <label style="font-size:0.8rem; font-weight:700; color:var(--text-muted);">PERÍODO:</label>
+                <select id="f-period-select" class="period-select" onchange="changeFinancePeriod()">
+                    <option value="SEPTIEMBRE-2026" selected>Septiembre 2026</option>
+                    <option value="OCTUBRE-2026">Octubre 2026</option>
+                    <option value="NOVIEMBRE-2026">Noviembre 2026</option>
+                    <option value="DICIEMBRE-2026">Diciembre 2026</option>
+                    <option value="ENERO-2027">Enero 2027</option>
+                    <option value="AGOSTO-2026">Agosto 2026</option>
+                    <option value="JULIO-2026">Julio 2026</option>
+                </select>
+                <button onclick="openArchiveModal()" class="btn-action-sm" style="background:#1e293b; border-color:#334155; color:#38bdf8;">💾 Respaldo & BD</button>
+                <button onclick="lockFinanceModule()" class="btn-action-sm" title="Bloquear y salir del módulo de finanzas">🔒 Bloquear</button>
+                <button onclick="showView('main-view')" class="btn-action-sm">← Volver al Menú</button>
+            </div>
+        </div>
+
+        <!-- KPIs Cards (Orden exacto solicitado: Ingresos Totales, Ingresos por Mensualidades, Arancel Esperado por Mensualidades, Por Asignar) -->
+        <div class="finance-kpis" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+            <!-- 1. INGRESOS TOTALES -->
+            <div class="kpi-card kpi-blue">
+                <div class="kpi-label">💰 Ingresos Totales</div>
+                <div class="kpi-value" id="kpi-total-general">$0</div>
+                <div class="kpi-sub" id="kpi-total-sub">Mensualidades + Pagos Extras</div>
+            </div>
+
+            <!-- 2. INGRESOS POR MENSUALIDADES -->
+            <div class="kpi-card kpi-green">
+                <div class="kpi-label">💳 Ingresos por Mensualidades</div>
+                <div class="kpi-value" id="kpi-mensualidades">$0</div>
+                <div class="kpi-sub" id="kpi-alumnos-pagaron">0 deportistas al día</div>
+            </div>
+
+            <!-- 3. ARANCEL ESPERADO POR MENSUALIDADES -->
+            <div class="kpi-card kpi-orange">
+                <div class="kpi-label">🎯 Arancel Esperado Mensual</div>
+                <div class="kpi-value" id="kpi-esperado">$0</div>
+                <div class="kpi-sub" id="kpi-deuda-mensualidades">Deuda cuotas: $0</div>
+            </div>
+
+            <!-- 4. POR ASIGNAR -->
+            <div class="kpi-card kpi-yellow" style="cursor:pointer;" onclick="switchFinanceTab('pending')" title="Ver transferencias pendientes de asignar">
+                <div class="kpi-label">⚡ Por Asignar (Banco)</div>
+                <div class="kpi-value" id="kpi-pendientes-count">0</div>
+                <div class="kpi-sub" id="kpi-pendientes-monto">$0 en transferencias</div>
+            </div>
+        </div>
+
+        <!-- Sub Tabs (Unificando Cartola en una sola pestaña principal) -->
+        <div class="finance-nav-tabs">
+            <button class="f-tab-btn active" id="f-tab-btn-athletes" onclick="switchFinanceTab('athletes')">📋 Nómina y Cuotas</button>
+            <button class="f-tab-btn" id="f-tab-btn-extras" onclick="switchFinanceTab('extras')">
+                📦 Pagos Extras <span class="tab-badge" id="f-extras-badge">0</span>
+            </button>
+            <button class="f-tab-btn" id="f-tab-btn-pending" onclick="switchFinanceTab('pending')">
+                ⚡ Por Asignar <span class="tab-badge" id="f-pending-badge">0</span>
+            </button>
+            <button class="f-tab-btn" id="f-tab-btn-expenses" onclick="switchFinanceTab('expenses')">
+                📉 Egresos & Gastos <span class="tab-badge" id="f-expenses-badge">0</span>
+            </button>
+            <button class="f-tab-btn" id="f-tab-btn-cartola" onclick="switchFinanceTab('cartola')">
+                📥 Subir Cartola Excel
+            </button>
+            <button class="f-tab-btn" id="f-tab-btn-categories" onclick="switchFinanceTab('categories')">👥 Agrupaciones</button>
+        </div>
+
+        <!-- TAB 1: NÓMINA DE ALUMNOS -->
+        <div id="f-tab-athletes" class="f-tab-content">
+            <!-- Barra de Filtros Compacta y Clara -->
+            <div class="finance-filters-row">
+                <div style="flex:1; min-width:200px; max-width:320px; position:relative;">
+                    <input type="text" id="f-search-input" class="f-search-input" style="width:100%; box-sizing:border-box;" placeholder="🔍 Buscar por nombre o RUT..." oninput="onAthletesSearchChange()">
+                    <button type="button" id="btn-clear-ath-search" onclick="clearAthleteSearch()" class="hidden" style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:0.9rem;">✕</button>
+                </div>
+
+                <select id="f-agrupacion-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:230px;">
+                    <option value="TODAS">Todas las Agrupaciones</option>
+                </select>
+
+                <select id="f-semaforo-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:170px;">
+                    <option value="TODOS">Todos los Estados</option>
+                    <option value="AL_DIA">🟢 Al Día</option>
+                    <option value="AMARILLO">🟡 1 Mes Pendiente</option>
+                    <option value="NARANJA">🟠 2 Meses Pendientes</option>
+                    <option value="ROJO">🔴 3+ Meses (Deuda)</option>
+                    <option value="BECADO">⚪ Becados</option>
+                </select>
+
+                <select id="f-fee-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:150px;">
+                    <option value="TODOS">Todas las Cuotas</option>
+                    <option value="REGULAR">Regular ($50k)</option>
+                    <option value="ADULTO">Adulta ($35k)</option>
+                    <option value="MINIVOLEY">Minivóley ($36k)</option>
+                    <option value="MASTER">Máster ($36k)</option>
+                    <option value="BECADO">Becado ($0)</option>
+                </select>
+
+                <button class="btn-action-sm" onclick="resetAthletesFilters()" title="Restablecer filtros" style="padding:6px 10px;">↺ Limpiar</button>
+
+                <div style="display:flex; gap:8px; margin-left:auto; align-items:center;">
+                    <button class="btn-action-sm" onclick="exportDebtorsCSV()" title="Descargar planilla de deudores">📑 Deudores CSV</button>
+                    <button class="primary" onclick="openNewAthleteModal()" style="padding:6px 12px; font-size:0.82rem;">+ Nuevo Alumno</button>
+                </div>
+            </div>
+
+            <!-- Contador de resultados -->
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:0.82rem; color:var(--text-muted);">
+                <span id="f-athletes-count-stats">Mostrando alumnos...</span>
+            </div>
+
+            <div class="f-table-container">
+                <table class="f-table">
+                    <thead>
+                        <tr>
+                            <th>Alumno</th>
+                            <th style="min-width:160px;">Agrupación</th>
+                            <th>Estado</th>
+                            <th>Cuota</th>
+                            <th>Pagado Mes</th>
+                            <th>RUTs Apoderados</th>
+                            <th style="text-align:right;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="f-athletes-tbody">
+                        <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">Cargando nómina de deportistas...</td></tr>
+                    </tbody>
+                </table>
+
+                <!-- Paginación de Alumnos -->
+                <div class="f-pagination-bar" id="f-ath-pagination">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span>Mostrar por página:</span>
+                        <select id="f-ath-page-size" class="f-page-size-select" onchange="changeAthletesPageSize(this.value)">
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                            <option value="ALL">Todos (250)</option>
+                        </select>
+                    </div>
+                    <div class="f-pagination-controls">
+                        <button class="f-page-btn" id="f-ath-prev-btn" onclick="changeAthletesPage(-1)" disabled>◀ Anterior</button>
+                        <span id="f-ath-page-info" style="font-weight:700; color:var(--text);">Página 1</span>
+                        <button class="f-page-btn" id="f-ath-next-btn" onclick="changeAthletesPage(1)">Siguiente ▶</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: PAGOS EXTRAS Y OTROS INGRESOS -->
+        <div id="f-tab-extras" class="f-tab-content hidden">
+            <div style="background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div>
+                    <h3 style="font-size:1.1rem; color:var(--text); margin-bottom:4px;">📦 Pagos Extras, Matrículas y Otros Ingresos</h3>
+                    <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">
+                        Ingresos distintos a la mensualidad regular (matrículas, uniformes, campeonatos, clínicas o pagos conjuntos). Puedes clasificar el concepto, asignar notas o dividir el pago entre varios alumnos.
+                    </p>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span id="f-extras-badge-total" style="background:rgba(187,134,252,0.15); color:#bb86fc; border:1px solid rgba(187,134,252,0.3); padding:6px 12px; border-radius:8px; font-weight:700; font-size:0.85rem;">
+                        $0 en extras
+                    </span>
+                    <button class="btn-action-sm" onclick="exportExtrasCSV()">📑 Exportar CSV</button>
+                </div>
+            </div>
+
+            <div class="finance-filters-row">
+                <input type="text" id="f-extras-search-input" class="f-search-input" placeholder="🔍 Buscar por alumno, apoderado, RUT o nota..." oninput="filterExtrasTable()">
+                <select id="f-extras-concept-filter" class="f-select" onchange="filterExtrasTable()">
+                    <option value="TODOS">Todos los Conceptos</option>
+                    <option value="POR_DEFINIR">⚡ Por Definir (Sin clasificar)</option>
+                    <option value="OTROS">📦 Otros (Pagos varios)</option>
+                    <option value="ANULADO">🚫 Anulado / Devolución</option>
+                    <option value="ARRIENDO_CANCHA">🏟️ Arriendo Cancha</option>
+                    <option value="INSCRIPCION_CAMPEONATO_VISITA">🏆 Inscripción Camp. (Visita)</option>
+                    <option value="PAGO_CAMPEONATO_LOCAL">🥇 Pago Camp. (Local)</option>
+                    <option value="MENSUALIDAD">💳 Mensualidad</option>
+                    <option value="MATRICULA">🎓 Matrícula</option>
+                    <option value="ROPA">👕 Ropa</option>
+                    <option value="DEBE">⏳ Debe</option>
+                    <option value="PASES">🎫 Pases</option>
+                    <option value="TALLERES">🏐 Talleres</option>
+                    <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
+                    <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
+                </select>
+                <div class="f-status-pills" style="margin-left:auto; display:flex; gap:6px; flex-wrap:wrap;">
+                    <button class="f-pill active" data-assigned="TODOS" onclick="setExtrasAssignedFilter('TODOS', this)">Todos</button>
+                    <button class="f-pill" data-assigned="POR_DEFINIR" onclick="setExtrasAssignedFilter('POR_DEFINIR', this)" style="border-color:#ffab00; color:#ffab00;">⚡ Por Definir</button>
+                    <button class="f-pill" data-assigned="CON_ALUMNO" onclick="setExtrasAssignedFilter('CON_ALUMNO', this)">👤 Asignados</button>
+                    <button class="f-pill" data-assigned="SIN_ALUMNO" onclick="setExtrasAssignedFilter('SIN_ALUMNO', this)">🏛️ General / Club</button>
+                </div>
+            </div>
+
+            <div class="f-table-container">
+                <table class="f-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Alumno Asignado</th>
+                            <th>RUT Pagador</th>
+                            <th>Nombre en Cartola</th>
+                            <th>Monto</th>
+                            <th>Concepto</th>
+                            <th>Glosa / Notas</th>
+                            <th style="text-align:right;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="f-extras-tbody">
+                        <tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">Cargando pagos extras...</td></tr>
+                    </tbody>
+                </table>
+
+                <!-- Paginación de Pagos Extras -->
+                <div class="f-pagination-bar" id="f-ext-pagination">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span>Mostrar por página:</span>
+                        <select id="f-ext-page-size" class="f-page-size-select" onchange="changeExtrasPageSize(this.value)">
+                            <option value="25" selected>25</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                            <option value="ALL">Todos</option>
+                        </select>
+                    </div>
+                    <div class="f-pagination-controls">
+                        <button class="f-page-btn" id="f-ext-prev-btn" onclick="changeExtrasPage(-1)" disabled>◀ Anterior</button>
+                        <span id="f-ext-page-info" style="font-weight:700; color:var(--text);">Página 1</span>
+                        <button class="f-page-btn" id="f-ext-next-btn" onclick="changeExtrasPage(1)">Siguiente ▶</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: TRANSFERENCIAS POR ASIGNAR -->
+        <div id="f-tab-pending" class="f-tab-content hidden">
+            <div style="background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:16px;">
+                <h3 style="font-size:1.1rem; color:var(--text); margin-bottom:4px;">⚡ Transferencias Pendientes de Asignar</h3>
+                <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">
+                    Transferencias bancarias sin vincular. Selecciona qué categoría es (Mensualidad, Ropa, Arriendo Gym, etc.) y asígnala al alumno con el buscador inteligente. Al asignarla, el sistema recordará el RUT para futuros meses.
+                </p>
+            </div>
+
+            <!-- Filtros de Transferencias Pendientes -->
+            <div class="finance-filters-row" style="flex-wrap:wrap; gap:8px;">
+                <input type="text" id="f-pending-search-input" class="f-search-input" placeholder="🔍 Buscar por pagador, RUT o banco..." oninput="filterPendingTable()">
+                
+                <select id="f-pending-concept-filter" class="f-select" onchange="filterPendingTable()">
+                    <option value="TODOS">Todos los Conceptos</option>
+                    <option value="POR_DEFINIR">⚡ Por Definir (Sin clasificar)</option>
+                    <option value="OTROS">📦 Otros (Pagos varios)</option>
+                    <option value="ANULADO">🚫 Anulado / Devolución</option>
+                    <option value="ARRIENDO_CANCHA">🏟️ Arriendo Cancha</option>
+                    <option value="INSCRIPCION_CAMPEONATO_VISITA">🏆 Inscripción Camp. (Visita)</option>
+                    <option value="PAGO_CAMPEONATO_LOCAL">🥇 Pago Camp. (Local)</option>
+                    <option value="MENSUALIDAD">💳 Mensualidad</option>
+                    <option value="MATRICULA">🎓 Matrícula</option>
+                    <option value="ROPA">👕 Ropa</option>
+                    <option value="DEBE">⏳ Debe</option>
+                    <option value="PASES">🎫 Pases</option>
+                    <option value="TALLERES">🏐 Talleres</option>
+                    <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
+                    <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
+                </select>
+
+                <select id="f-pending-amount-filter" class="f-select" onchange="filterPendingTable()">
+                    <option value="TODOS">Todos los Montos</option>
+                    <option value="EXACT_50">Exacto $50.000 (Regular)</option>
+                    <option value="EXACT_36">Exacto $36.000 (Minivóley/Máster)</option>
+                    <option value="EXACT_35">Exacto $35.000 (Adulta)</option>
+                    <option value="ABOVE_50">Mayor a $50.000 (Posibles Hermanos / Sumas)</option>
+                    <option value="BELOW_35">Menor a $35.000</option>
+                </select>
+
+                <button class="btn-action-sm" onclick="resetPendingFilters()" title="Restablecer filtros">↺ Limpiar</button>
+                <span id="f-pending-count-stats" style="margin-left:auto; font-size:0.85rem; color:var(--text-muted); align-self:center;"></span>
+            </div>
+
+            <div class="f-table-container">
+                <table class="f-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>RUT Origen</th>
+                            <th>Nombre en Cartola</th>
+                            <th>Banco</th>
+                            <th>Monto</th>
+                            <th>Categoría / Concepto</th>
+                            <th>Asignar a Alumno</th>
+                        </tr>
+                    </thead>
+                    <tbody id="f-pending-tbody">
+                        <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No hay transferencias pendientes de asignar.</td></tr>
+                    </tbody>
+                </table>
+
+                <!-- Paginación de Transferencias Pendientes -->
+                <div class="f-pagination-bar" id="f-pend-pagination">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span>Mostrar por página:</span>
+                        <select id="f-pend-page-size" class="f-page-size-select" onchange="changePendingPageSize(this.value)">
+                            <option value="20" selected>20</option>
+                            <option value="50">50</option>
+                            <option value="ALL">Todos</option>
+                        </select>
+                    </div>
+                    <div class="f-pagination-controls">
+                        <button class="f-page-btn" id="f-pend-prev-btn" onclick="changePendingPage(-1)" disabled>◀ Anterior</button>
+                        <span id="f-pend-page-info" style="font-weight:700; color:var(--text);">Página 1</span>
+                        <button class="f-page-btn" id="f-pend-next-btn" onclick="changePendingPage(1)">Siguiente ▶</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: CONCILIADOR DE CARTOLA Y ÚLTIMOS MOVIMIENTOS -->
+        <div id="f-tab-cartola" class="f-tab-content hidden">
+            <div class="cartola-upload-box">
+                
+                <!-- Selector de Tipo de Archivo -->
+                <div class="cartola-mode-selector">
+                    <div id="mode-card-cartola" class="mode-upload-card active" onclick="setCartolaUploadMode('CARTOLA')">
+                        <span class="mode-badge" style="background:rgba(33, 150, 243, 0.2); color:#2196f3;">Opción 1</span>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="font-size:1.3rem;">📑</span>
+                            <strong style="color:var(--text); font-size:0.95rem;">Cartola de Transferencias</strong>
+                        </div>
+                        <span style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
+                            Transferencias bancarias recibidas de terceros (.xlsx, .xls, .csv).
+                        </span>
+                    </div>
+
+                    <div id="mode-card-scotia" class="mode-upload-card" onclick="setCartolaUploadMode('SCOTIABANK_MOV')">
+                        <span class="mode-badge" style="background:rgba(255, 87, 34, 0.2); color:#ff5722;">Opción 2 • Scotiabank</span>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="font-size:1.3rem;">🏦</span>
+                            <strong style="color:var(--text); font-size:0.95rem;">Últimos Movimientos Scotiabank</strong>
+                        </div>
+                        <span style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
+                            Archivo XML (typeDesc.xml) o Excel. Incluye transferencias entre cuentas Scotiabank, filtra salidas de dinero y evita duplicados.
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Zona de Arrastre / Carga de Archivo -->
+                <div class="drop-zone" id="cartola-drop-zone" onclick="document.getElementById('cartola-file-input').click()">
+                    <input type="file" id="cartola-file-input" accept=".xlsx,.xls,.csv,.xml" style="display:none;" onchange="handleCartolaFile(event)">
+                    <div class="drop-zone-icon" id="cartola-drop-icon">📥</div>
+                    <div class="drop-zone-title" id="cartola-drop-title">Arrastra aquí la Cartola Bancaria o Movimientos</div>
+                    <div class="drop-zone-sub" id="cartola-drop-sub">o haz clic para seleccionar el archivo (typeDesc.xml, Excel o CSV)</div>
+                    <span style="font-size:0.78rem; color:var(--accent); font-weight:700;" id="cartola-drop-formats">Formatos soportados: .xml (typeDesc Scotiabank), .xlsx, .xls, .csv</span>
+                </div>
+
+                <div style="margin-top:20px; text-align:left;">
+                    <details style="background:#111; padding:12px 16px; border-radius:8px; border:1px solid var(--border);">
+                        <summary style="cursor:pointer; color:var(--text-muted); font-size:0.85rem; font-weight:600;">📋 O pegar texto copiado desde Excel/Banco</summary>
+                        <div style="margin-top:10px;">
+                            <textarea id="cartola-paste-area" placeholder="Pega aquí las filas copiadas directamente de la cartola de Excel o movimientos de cuenta..." style="width:100%; height:120px; background:#181818; border:1px solid var(--border); color:#fff; padding:10px; border-radius:6px; font-family:monospace; font-size:0.8rem;"></textarea>
+                            <button onclick="handlePasteCartola()" class="primary" style="margin-top:8px;">Procesar Texto Pegado</button>
+                        </div>
+                    </details>
+                </div>
+
+                <!-- Preview Box -->
+                <div id="cartola-preview-box" class="hidden" style="margin-top:24px; text-align:left;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <h4 id="cartola-preview-title" style="font-size:1rem; color:var(--text); margin-bottom:2px;">Vista previa de movimientos</h4>
+                            <div id="cartola-preview-stats" style="font-size:0.8rem; color:var(--text-muted);"></div>
+                        </div>
+                        <button id="btn-run-reconciliation" class="primary" onclick="executeCartolaReconciliation()" style="font-size:0.95rem; padding:10px 20px;">🚀 Conciliar Transferencias</button>
+                    </div>
+                    <div class="f-table-container" style="max-height:320px; overflow-y:auto;">
+                        <table class="f-table">
+                            <thead>
+                                <tr>
+                                    <th>Fecha</th>
+                                    <th>Documento / Ref</th>
+                                    <th>RUT Origen</th>
+                                    <th>Nombre Pagador / Glosa</th>
+                                    <th>Banco / Sucursal</th>
+                                    <th>Monto Abono</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cartola-preview-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Summary Result -->
+                <div id="cartola-result-box" class="hidden" style="margin-top:20px; background:rgba(0,230,118,0.08); border:1px solid rgba(0,230,118,0.3); padding:18px 24px; border-radius:12px; text-align:left;">
+                    <h4 style="color:var(--success); font-size:1.1rem; margin-bottom:8px;">✅ Procesamiento y Conciliación Completados</h4>
+                    <p id="cartola-result-desc" style="color:var(--text); font-size:0.9rem; margin:0; line-height:1.6;"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: REPORTE POR AGRUPACIONES -->
+        <div id="f-tab-categories" class="f-tab-content hidden">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+                <div class="f-status-pills">
+                    <button class="f-pill active" id="btn-cat-view-agrupacion" onclick="setCategoriesViewMode('agrupacion')">👥 Agrupaciones (Equipos)</button>
+                    <button class="f-pill" id="btn-cat-view-category" onclick="setCategoriesViewMode('category')">🏷️ Categorías (Por Edad)</button>
+                </div>
+            </div>
+            <div class="f-table-container">
+                <table class="f-table">
+                    <thead>
+                        <tr>
+                            <th id="th-cat-title">Agrupación / Equipo</th>
+                            <th>Alumnos</th>
+                            <th>Arancel Esperado</th>
+                            <th>Recaudado Total</th>
+                            <th>Progreso de Cobranza</th>
+                        </tr>
+                    </thead>
+                    <tbody id="f-categories-tbody">
+                        <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">Cargando reporte de agrupaciones...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB 5: EGRESOS Y GASTOS OPERATIVOS DEL CLUB -->
+        <div id="f-tab-expenses" class="f-tab-content hidden">
+            <!-- KPIs Egresos -->
+            <div class="finance-kpis" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom:18px;">
+                <div class="kpi-card" style="border-left: 4px solid var(--danger);">
+                    <div class="kpi-label">📉 Total Egresos del Mes</div>
+                    <div class="kpi-value" id="kpi-egresos-total" style="color:var(--danger);">$0</div>
+                    <div class="kpi-sub" id="kpi-egresos-count">0 comprobantes</div>
+                </div>
+                <div class="kpi-card" style="border-left: 4px solid var(--accent);">
+                    <div class="kpi-label">⚖️ Saldo Neto Operativo</div>
+                    <div class="kpi-value" id="kpi-saldo-neto">$0</div>
+                    <div class="kpi-sub" id="kpi-saldo-neto-sub">Ingresos - Egresos</div>
+                </div>
+                <div class="kpi-card" style="border-left: 4px solid var(--success);">
+                    <div class="kpi-label">📈 Ingresos Totales Recaudados</div>
+                    <div class="kpi-value" id="kpi-egresos-ingresos-total">$0</div>
+                    <div class="kpi-sub">Mensualidades + Extras</div>
+                </div>
+            </div>
+
+            <!-- Controles Egresos -->
+            <div class="finance-filters-row" style="flex-wrap:wrap; gap:8px;">
+                <button class="primary" onclick="openExpenseModal()" style="font-weight:700;">+ Registrar Egreso</button>
+                <input type="text" id="f-expense-search" class="f-search-input" placeholder="🔍 Buscar proveedor, beneficiario, boleta o nota..." oninput="filterExpensesTable()">
+                <select id="f-expense-category-filter" class="f-select" onchange="filterExpensesTable()">
+                    <option value="TODOS">Todas las Categorías de Egreso</option>
+                    <option value="ARRIENDO_GIMNASIO">🏢 Arriendo Canchas / Gimnasio</option>
+                    <option value="HONORARIOS_ENTRENADORES">🏐 Honorarios Entrenadores / Staff</option>
+                    <option value="TORNEOS_ARBITRAJE">🏆 Torneos, Arbitrajes y Ligas</option>
+                    <option value="MATERIALES_INDUMENTARIA">👕 Balones, Redes e Indumentaria</option>
+                    <option value="SERVICIOS_BASICOS">💡 Servicios, Software y Operación</option>
+                    <option value="OTROS">📦 Otros Gastos Varios</option>
+                </select>
+                <button class="btn-action-sm" onclick="exportExpensesCSV()">📑 Exportar CSV</button>
+                <span id="f-expenses-count-stats" style="margin-left:auto; font-size:0.85rem; color:var(--text-muted); align-self:center;"></span>
+            </div>
+
+            <!-- Tabla Egresos -->
+            <div class="f-table-container">
+                <table class="f-table">
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Período</th>
+                            <th>Categoría</th>
+                            <th>Beneficiario / Proveedor</th>
+                            <th>N° Comprobante</th>
+                            <th>Medio de Pago</th>
+                            <th>Monto</th>
+                            <th>Notas</th>
+                            <th style="text-align:right;">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="f-expenses-tbody">
+                        <tr><td colspan="9" style="text-align:center; padding:30px; color:var(--text-muted);">Sin egresos registrados para este período.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    <!-- MODAL: CLAVE MAESTRA DE ACCESO A FINANZAS -->
+    <div id="f-auth-modal" class="f-modal-overlay hidden" style="z-index: 10005;">
+        <div class="f-modal" style="max-width: 380px; text-align: center; padding: 26px 22px;">
+            <div style="font-size: 2.2rem; margin-bottom: 8px;">🔐</div>
+            <h3 style="margin-bottom: 6px; font-size: 1.15rem; color: #fff;">Acceso a Finanzas</h3>
+            <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 18px; line-height: 1.4;">
+                Ingresa la clave general para acceder y administrar las finanzas del club.
+            </p>
+            <form onsubmit="handleFinanceAuthSubmit(event)">
+                <div style="margin-bottom: 12px;">
+                    <input type="password" id="f-auth-pin-input" class="f-search-input" style="width: 100%; text-align: center; font-size: 1.15rem; letter-spacing: 2px; padding: 10px; box-sizing: border-box;" placeholder="Ingresa la clave..." autocomplete="current-password">
+                </div>
+                <div id="f-auth-error-msg" style="color: var(--danger); font-size: 0.8rem; margin-bottom: 12px; display: none; font-weight: 600;">
+                    ❌ Clave incorrecta. Inténtalo de nuevo.
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: center;">
+                    <button type="button" class="btn-action-sm" onclick="closeFinanceAuthModal()" style="padding: 7px 16px;">Cancelar</button>
+                    <button type="submit" class="primary" style="padding: 7px 20px; font-weight: 700;">Ingresar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: FICHA / DETALLE DEL ALUMNO -->
+    <div id="f-athlete-modal" class="f-modal-overlay hidden">
+        <div class="f-modal">
+            <div class="f-modal-header">
+                <h3 id="modal-ath-name">Ficha del Alumno</h3>
+                <button class="f-modal-close" onclick="closeAthleteModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+                    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                        <span id="modal-ath-cat" class="cat-pill">Categoría</span>
+                        <span id="modal-ath-agrupacion" class="cat-pill" style="background:#222; border-color:#555; color:var(--accent-light);">Agrupación</span>
+                        <span id="modal-ath-status" class="badge-status badge-ok">Al Día</span>
+                        <span id="modal-ath-semaforo" class="badge-semaforo">🟢</span>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <button id="btn-modal-wa-charge" class="btn-whatsapp" onclick="openWhatsAppModal(currentActiveAthlete?.id)" style="font-size:0.8rem; padding:6px 12px; background:#25D366; color:#000; font-weight:700; border:none; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:4px;">
+                            💬 Cobrar WhatsApp
+                        </button>
+                        <div style="text-align:right;">
+                            <span style="font-size:0.75rem; color:var(--text-muted); display:block;">CUOTA MENSUAL</span>
+                            <strong id="modal-ath-fee" style="font-size:1.15rem; color:var(--accent-light);">$50.000</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Configuración de Ficha, Arancel y Beca -->
+                <details style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:18px;">
+                    <summary style="cursor:pointer; color:var(--accent-light); font-size:0.85rem; font-weight:700;">⚙️ Editar Ficha, Categoría, Agrupación y Beca</summary>
+                    <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">CATEGORÍA OFICIAL (EDAD)</label>
+                            <select id="modal-edit-cat" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;"></select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">AGRUPACIÓN (EQUIPO BAYES)</label>
+                            <select id="modal-edit-agrupacion" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;">
+                                <option value="Master">Master</option>
+                                <option value="Minivoley">Minivoley</option>
+                                <option value="TC Damas">TC Damas</option>
+                                <option value="TC Varones">TC Varones</option>
+                                <option value="U12 G1 Damas">U12 G1 Damas</option>
+                                <option value="U12 G2 Damas">U12 G2 Damas</option>
+                                <option value="U14 G1 Damas">U14 G1 Damas</option>
+                                <option value="U14 G2 Damas">U14 G2 Damas</option>
+                                <option value="U14 Varones">U14 Varones</option>
+                                <option value="U16 G1 Damas">U16 G1 Damas</option>
+                                <option value="U16 G2 Damas">U16 G2 Damas</option>
+                                <option value="U16 Varones">U16 Varones</option>
+                                <option value="U18 Damas">U18 Damas</option>
+                                <option value="U18 Varones">U18 Varones</option>
+                                <option value="PF U14 G1 Damas">PF U14 G1 Damas</option>
+                                <option value="PF U16 G1 Damas">PF U16 G1 Damas</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TIPO DE ARANCEL / BECA</label>
+                            <select id="modal-edit-fee-type" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;" onchange="onFeeTypeChangeInModal(this.value)">
+                                <option value="REGULAR">Regular (100% Cuota Normal)</option>
+                                <option value="MEDIA_BECA">Media Beca (50% Descuento)</option>
+                                <option value="BECA_COMPLETA">Beca Completa (100% - $0)</option>
+                                <option value="CONVENIO_HERMANOS">Convenio Hermanos</option>
+                                <option value="MONTO_ESPECIAL">Arancel Especial Personalizado</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">CUOTA A PAGAR ($ CLP)</label>
+                            <input type="number" id="modal-edit-fee-amount" class="f-form-input" style="font-size:0.85rem; padding:6px 8px;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO / WHATSAPP</label>
+                            <input type="text" id="modal-edit-phone" class="f-form-input" placeholder="+56 9 1234 5678" style="font-size:0.85rem; padding:6px 8px;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">ESTADO ALUMNO</label>
+                            <select id="modal-edit-status" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;">
+                                <option value="ACTIVO">Activo</option>
+                                <option value="INACTIVO">Inactivo</option>
+                                <option value="RETIRADO">Retirado</option>
+                            </select>
+                        </div>
+                        <div style="grid-column: span 2;">
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">GLOSA / OBSERVACIONES DE BECA O CONVENIO</label>
+                            <input type="text" id="modal-edit-notes" class="f-form-input" placeholder="Ej. Beca deportiva otorgada por directiva hasta diciembre 2026..." style="font-size:0.82rem; padding:6px 8px;">
+                        </div>
+                        <div style="grid-column: span 2; text-align:right; margin-top:4px;">
+                            <button type="button" class="primary" onclick="saveAthleteProfileChanges()" style="padding:6px 14px; font-size:0.82rem;">💾 Guardar Cambios de Ficha</button>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- RUTs vinculados -->
+                <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:18px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <strong style="font-size:0.82rem; text-transform:uppercase; color:var(--text-muted);">RUTs de Apoderados Vinculados</strong>
+                    </div>
+                    <div id="modal-ath-ruts-list" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="modal-new-rut-input" placeholder="Agregar nuevo RUT (ej. 12.345.678-9)" style="flex:1; background:#1e1e1e; border:1px solid #333; color:#fff; padding:6px 10px; border-radius:6px; font-size:0.85rem;">
+                        <button onclick="addRutToCurrentAthlete()" class="btn-action-sm">+ Vincular</button>
+                    </div>
+                </div>
+
+                <!-- Historial de Pagos -->
+                <h4 style="font-size:0.9rem; text-transform:uppercase; color:var(--text-muted); margin-bottom:8px;">Historial de Pagos y Transferencias</h4>
+                <div class="f-table-container" style="max-height:200px; overflow-y:auto; margin-bottom:18px;">
+                    <table class="f-table" style="font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Período</th>
+                                <th>RUT Pagador</th>
+                                <th>Concepto</th>
+                                <th>Monto</th>
+                                <th style="text-align:center;">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-ath-payments-tbody">
+                            <tr><td colspan="6" style="text-align:center; padding:15px; color:var(--text-muted);">Sin pagos registrados.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Registrar Pago Manual (Efectivo / Ajuste) -->
+                <details style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:18px;">
+                    <summary style="cursor:pointer; color:var(--success); font-size:0.85rem; font-weight:700;">+ Registrar Pago Manual (Efectivo / Otro)</summary>
+                    <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">MONTO ($ CLP)</label>
+                            <input type="number" id="manual-pay-amount" placeholder="Ej. 50000" class="f-form-input" style="padding:6px 10px; font-size:0.85rem;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">MÉTODO</label>
+                            <select id="manual-pay-method" class="f-form-select" style="padding:6px 10px; font-size:0.85rem;">
+                                <option value="EFECTIVO">Efectivo</option>
+                                <option value="TRANSFERENCIA DIRECTA">Transferencia Directa</option>
+                                <option value="OTRO">Otro</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">CONCEPTO</label>
+                            <select id="manual-pay-concept" class="f-form-select" style="padding:6px 10px; font-size:0.85rem;">
+                                <option value="MENSUALIDAD">Mensualidad</option>
+                                <option value="MATRICULA">Matrícula</option>
+                                <option value="CAMPEONATO">Campeonato</option>
+                                <option value="ROPA">Ropa / Polera</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">FECHA</label>
+                            <input type="date" id="manual-pay-date" class="f-form-input" style="padding:6px 10px; font-size:0.85rem;">
+                        </div>
+                    </div>
+                    <button onclick="submitManualPayment()" class="primary" style="margin-top:10px; width:100%; padding:8px; font-size:0.85rem;">Guardar Pago Manual</button>
+                </details>
+
+                <!-- Notas y observaciones -->
+                <div class="f-form-group">
+                    <label>Notas / Observaciones</label>
+                    <textarea id="modal-ath-notes" class="f-form-input" style="height:60px; font-size:0.85rem;" placeholder="Observaciones de cobranza (ej. lesionado, beca especial, etc.)"></textarea>
+                </div>
+            </div>
+            <div class="f-modal-footer">
+                <button class="btn-action-sm" onclick="saveAthleteNotes()">Guardar Notas</button>
+                <button class="primary" onclick="closeAthleteModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: NUEVO DEPORTISTA -->
+    <div id="f-new-athlete-modal" class="f-modal-overlay hidden">
+        <div class="f-modal">
+            <div class="f-modal-header">
+                <h3>Nuevo Deportista</h3>
+                <button class="f-modal-close" onclick="closeNewAthleteModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div class="f-form-group">
+                    <label>Nombres</label>
+                    <input type="text" id="new-ath-first-name" class="f-form-input" placeholder="Ej. Camila Andrea">
+                </div>
+                <div class="f-form-group">
+                    <label>Apellidos</label>
+                    <input type="text" id="new-ath-last-name" class="f-form-input" placeholder="Ej. Carrasco Vásquez">
+                </div>
+                <div class="f-form-group">
+                    <label>Categoría</label>
+                    <select id="new-ath-category" class="f-form-select" onchange="autoSelectFeeType()">
+                        <option value="U14 Damas F">U14 Damas F (Regular $50.000)</option>
+                        <option value="U16 Damas F">U16 Damas F (Regular $50.000)</option>
+                        <option value="U18 Damas F">U18 Damas F (Regular $50.000)</option>
+                        <option value="TC Damas F">TC Damas F (Adulta $35.000)</option>
+                        <option value="TC Varones M">TC Varones M (Adulta $35.000)</option>
+                        <option value="U16 Varones M">U16 Varones M (Regular $50.000)</option>
+                        <option value="U18 Varones M">U18 Varones M (Regular $50.000)</option>
+                        <option value="U11 Damas F">U11 Damas F (Minivóley $36.000)</option>
+                        <option value="U10 Damas F">U10 Damas F (Minivóley $36.000)</option>
+                        <option value="Máster">Máster (Máster $36.000)</option>
+                    </select>
+                </div>
+                <div class="f-form-group">
+                    <label>Tipo de Cuota</label>
+                    <select id="new-ath-fee-type" class="f-form-select" onchange="updateNewAthFeeAmount()">
+                        <option value="REGULAR">Regular ($50.000)</option>
+                        <option value="ADULTO">Adulta ($35.000)</option>
+                        <option value="MINIVOLEY">Minivóley ($36.000)</option>
+                        <option value="MASTER">Máster ($36.000)</option>
+                        <option value="BECADO">Becado ($0)</option>
+                    </select>
+                </div>
+                <div class="f-form-group">
+                    <label>RUT de Apoderado / Pagador Inicial (Opcional)</label>
+                    <input type="text" id="new-ath-initial-rut" class="f-form-input" placeholder="Ej. 15.234.567-8">
+                </div>
+                <div class="f-form-group">
+                    <label>Nombre del Apoderado (Opcional)</label>
+                    <input type="text" id="new-ath-payer-name" class="f-form-input" placeholder="Nombre completo del apoderado">
+                </div>
+                <div class="f-form-group">
+                    <label>Observaciones</label>
+                    <input type="text" id="new-ath-notes" class="f-form-input" placeholder="Notas adicionales">
+                </div>
+            </div>
+            <div class="f-modal-footer">
+                <button class="btn-action-sm" onclick="closeNewAthleteModal()">Cancelar</button>
+                <button class="primary" onclick="saveNewAthlete()">Crear Deportista</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: EDITAR / CLASIFICAR MOVIMIENTO EXTRA -->
+    <div id="f-edit-mov-modal" class="f-modal-overlay hidden">
+        <div class="f-modal">
+            <div class="f-modal-header">
+                <h3>✏️ Clasificar Pago / Movimiento</h3>
+                <button class="f-modal-close" onclick="closeEditMovementModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <span id="edit-mov-date" style="font-size:0.8rem; color:var(--text-muted);">Fecha</span>
+                        <strong id="edit-mov-amount" style="font-size:1.15rem; color:var(--success);">$0</strong>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--text);" id="edit-mov-payer">Pagador</div>
+                    <div style="font-size:0.75rem; color:var(--text-dim);" id="edit-mov-rut">RUT</div>
+                </div>
+
+                <div class="f-form-group">
+                    <label>Concepto del Pago</label>
+                    <select id="edit-mov-concept" class="f-form-select">
+                        <option value="POR_DEFINIR">⚡ Por definir (Pendiente de clasificar)</option>
+                        <option value="OTROS">📦 Otros (Pagos varios)</option>
+                        <option value="ANULADO">🚫 Anulado / Devolución por error</option>
+                        <option value="MENSUALIDAD">💳 Mensualidad</option>
+                        <option value="ARRIENDO_CANCHA">🏟️ Arriendo Cancha</option>
+                        <option value="INSCRIPCION_CAMPEONATO_VISITA">🏆 Inscripción Campeonato (Visita)</option>
+                        <option value="PAGO_CAMPEONATO_LOCAL">🥇 Pago Campeonato (Local)</option>
+                        <option value="MATRICULA">🎓 Matrícula</option>
+                        <option value="ROPA">👕 Ropa</option>
+                        <option value="DEBE">⏳ Debe</option>
+                        <option value="PASES">🎫 Pases</option>
+                        <option value="TALLERES">🏐 Talleres</option>
+                        <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
+                        <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
+                    </select>
+                </div>
+
+                <div class="f-form-group">
+                    <label>Asignar a Alumno</label>
+                    <div id="edit-mov-athlete-picker" class="ath-picker-container">
+                        <input type="text" id="edit-mov-ath-search" class="f-form-input" placeholder="🔍 Escribe para buscar alumno..." oninput="searchAthletesForEdit(this.value)">
+                        <div id="edit-mov-ath-results" class="ath-dropdown-results hidden"></div>
+                        <div id="edit-mov-selected-ath" class="selected-ath-chip hidden">
+                            <span id="edit-mov-selected-name">Alumno Seleccionado</span>
+                            <button type="button" onclick="clearEditMovementAthlete()" title="Quitar alumno">✕</button>
+                        </div>
+                    </div>
+                    <small style="color:var(--text-dim); font-size:0.75rem;">Si es un pago general del club o no corresponde a un alumno en particular, déjalo vacío.</small>
+                </div>
+
+                <div class="f-form-group">
+                    <label>Período / Mes</label>
+                    <select id="edit-mov-period" class="f-form-select">
+                        <option value="SEPTIEMBRE-2026">Septiembre 2026</option>
+                        <option value="OCTUBRE-2026">Octubre 2026</option>
+                        <option value="NOVIEMBRE-2026">Noviembre 2026</option>
+                        <option value="DICIEMBRE-2026">Diciembre 2026</option>
+                        <option value="ENERO-2027">Enero 2027</option>
+                        <option value="AGOSTO-2026">Agosto 2026</option>
+                        <option value="JULIO-2026">Julio 2026</option>
+                    </select>
+                </div>
+
+                <div class="f-form-group">
+                    <label>Glosa / Notas / Observaciones</label>
+                    <input type="text" id="edit-mov-notes" class="f-form-input" placeholder="Detalle adicional (ej: polera talla M, 2da cuota torneo)">
+                </div>
+            </div>
+            <div class="f-modal-footer">
+                <button class="btn-action-sm" onclick="closeEditMovementModal()">Cancelar</button>
+                <button class="primary" onclick="saveEditMovement()">Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: DIVIDIR / DESGLOSAR PAGO (PARA HERMANOS O MULTI-CONCEPTOS) -->
+    <div id="f-split-modal" class="f-modal-overlay hidden">
+        <div class="f-modal" style="max-width:620px;">
+            <div class="f-modal-header">
+                <h3>✂️ Dividir Transferencia Bancaria</h3>
+                <button class="f-modal-close" onclick="closeSplitModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 16px; margin-bottom:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); display:block;">Transferencia Original</span>
+                            <strong id="split-orig-payer" style="font-size:0.95rem; color:var(--text);">Pagador</strong>
+                            <div id="split-orig-meta" style="font-size:0.75rem; color:var(--text-dim);">Fecha / RUT</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <span style="font-size:0.75rem; color:var(--text-muted); display:block;">MONTO TOTAL</span>
+                            <strong id="split-orig-amount" style="font-size:1.3rem; color:var(--accent);">$0</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
+                    <button type="button" class="btn-action-sm" onclick="autoSplitConsecutiveMonths()" style="background:#222; border-color:#444; color:var(--accent-light); font-size:0.78rem;">
+                        📅 Auto-Repartir Meses Consecutivos (Adelanto)
+                    </button>
+                    <button type="button" class="btn-action-sm" onclick="autoSplitEqualParts(2)" style="background:#222; border-color:#444; color:var(--text); font-size:0.78rem;">
+                        ✂️ Dividir en 2 Mitades
+                    </button>
+                </div>
+
+                <!-- Live Balance Bar -->
+                <div id="split-balance-bar" style="background:#181818; border:1px solid var(--border); border-radius:8px; padding:10px 14px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span style="font-size:0.8rem; color:var(--text-muted);">Suma de partes:</span>
+                        <strong id="split-sum-display" style="font-size:0.95rem; margin-left:6px; color:#fff;">$0</strong>
+                    </div>
+                    <div id="split-balance-status" style="font-size:0.82rem; font-weight:700; color:var(--danger);">
+                        ⚠️ Faltan $0 por asignar
+                    </div>
+                </div>
+
+                <div id="split-parts-container" style="display:flex; flex-direction:column; gap:12px; margin-bottom:14px;">
+                    <!-- Se generan dinámicamente con JS -->
+                </div>
+
+                <button type="button" class="btn-action-sm" onclick="addSplitPartRow()" style="width:100%; border-style:dashed; padding:8px;">
+                    + Agregar otra parte
+                </button>
+            </div>
+            <div class="f-modal-footer">
+                <button class="btn-action-sm" onclick="closeSplitModal()">Cancelar</button>
+                <button id="btn-submit-split" class="primary" onclick="submitSplitMovement()" disabled>✓ Confirmar y Dividir</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: GESTIÓN HISTÓRICA, RESPALDO Y LIBERACIÓN DE BASE DE DATOS -->
+    <div id="f-archive-modal" class="f-modal-overlay hidden">
+        <div class="f-modal" style="max-width:680px;">
+            <div class="f-modal-header">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:1.4rem;">💾</span>
+                    <div>
+                        <h3 style="margin:0; font-size:1.1rem; color:var(--text);">Gestión Histórica & Respaldo de Base de Datos</h3>
+                        <span style="font-size:0.75rem; color:var(--text-muted);">Descarga respaldos a tu disco y libera espacio en la nube cuando quieras</span>
+                    </div>
+                </div>
+                <button class="f-modal-close" onclick="closeArchiveModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                
+                <!-- Monitor de Salud y Almacenamiento -->
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:18px;">
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Total Movimientos</span>
+                        <strong id="db-stat-total-movs" style="font-size:1.2rem; color:var(--accent-light);">...</strong>
+                    </div>
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Nómina Alumnos</span>
+                        <strong id="db-stat-total-aths" style="font-size:1.2rem; color:var(--text);">...</strong>
+                    </div>
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Meses en BD</span>
+                        <strong id="db-stat-total-periods" style="font-size:1.2rem; color:var(--success);">...</strong>
+                    </div>
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Salud BD</span>
+                        <strong style="font-size:1.1rem; color:var(--success);">⚡ Óptima</strong>
+                    </div>
+                </div>
+
+                <!-- Herramienta 1: Descargar Respaldo Completo a Disco -->
+                <div style="background:#181818; border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                        <strong style="color:var(--text); font-size:0.95rem;">📥 1. Guardar Desglose Completo en Disco</strong>
+                        <span style="font-size:0.75rem; color:var(--success); background:rgba(0,230,118,0.1); padding:2px 8px; border-radius:4px;">Recomendado</span>
+                    </div>
+                    <p style="font-size:0.8rem; color:var(--text-muted); margin:0 0 10px 0;">
+                        Genera un archivo con cada transferencia, alumno asignado, pagos de mensualidad, extras y balances del mes para guardarlo de respaldo en tu computador o disco duro externo.
+                    </p>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <select id="archive-export-period" class="f-form-select" style="max-width:200px; font-size:0.85rem; padding:6px 10px;">
+                            <option value="JULIO-2026">Julio 2026</option>
+                            <option value="AGOSTO-2026">Agosto 2026</option>
+                            <option value="SEPTIEMBRE-2026" selected>Septiembre 2026</option>
+                        </select>
+                        <button onclick="downloadMonthlyBackupJSON()" class="primary" style="font-size:0.85rem; padding:6px 14px;">💾 Descargar Respaldo (.json)</button>
+                        <button onclick="downloadMonthlyBackupCSV()" class="btn-action-sm" style="font-size:0.85rem; padding:6px 14px;">📑 Exportar Planilla (.csv)</button>
+                    </div>
+                </div>
+
+                <!-- Herramienta 2: Archivar y Liberar Espacio -->
+                <div style="background:#1e1010; border:1px solid rgba(244,67,54,0.3); border-radius:10px; padding:14px; margin-bottom:14px;">
+                    <strong style="color:#ff5252; font-size:0.95rem; display:block; margin-bottom:4px;">🧹 2. Archivar y Liberar Espacio de la Base de Datos</strong>
+                    <p style="font-size:0.8rem; color:#ff8a80; margin:0 0 10px 0;">
+                        Si ya guardaste el respaldo del mes en tu disco, puedes quitar los movimientos de la base de datos activa para que la app se mantenga liviana y rápida.
+                    </p>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <select id="archive-purge-period" class="f-form-select" style="max-width:200px; font-size:0.85rem; padding:6px 10px;">
+                            <option value="JULIO-2026">Julio 2026</option>
+                            <option value="AGOSTO-2026">Agosto 2026</option>
+                        </select>
+                        <input type="text" id="archive-purge-confirm" placeholder="Escribe ARCHIVAR" class="f-form-input" style="max-width:160px; font-size:0.85rem; padding:6px 10px; border-color:#d32f2f;">
+                        <button onclick="executePurgeMonth()" class="btn-action-sm" style="background:#b71c1c; border-color:#e53935; color:#fff; font-size:0.85rem; padding:6px 14px;">Liberar Espacio</button>
+                    </div>
+                </div>
+
+                <!-- Herramienta 3: Restaurar Respaldo -->
+                <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:14px;">
+                    <strong style="color:var(--text); font-size:0.95rem; display:block; margin-bottom:4px;">📤 3. Restaurar Respaldo Guardado a la Base de Datos</strong>
+                    <p style="font-size:0.8rem; color:var(--text-muted); margin:0 0 10px 0;">
+                        ¿Necesitas consultar un mes que habías archivado? Selecciona el archivo <code>.json</code> descargado previamente y se recargará de inmediato en la base de datos.
+                    </p>
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                        <input type="file" id="archive-restore-input" accept=".json" style="font-size:0.8rem; color:var(--text-muted);">
+                        <button onclick="executeRestoreBackup()" class="btn-action-sm" style="font-size:0.85rem; padding:6px 14px;">Recargar Mes en BD</button>
+                    </div>
+                </div>
+
+            </div>
+            <div class="f-modal-footer">
+                <button class="primary" onclick="closeArchiveModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: COBRANZA PERSONALIZADA POR WHATSAPP -->
+    <div id="f-whatsapp-modal" class="f-modal-overlay hidden">
+        <div class="f-modal" style="max-width:550px;">
+            <div class="f-modal-header" style="border-bottom: 1px solid rgba(37,211,102,0.3);">
+                <h3 style="color:#25D366; display:flex; align-items:center; gap:8px;">
+                    <span>💬</span> Cobranza por WhatsApp Web
+                </h3>
+                <button class="f-modal-close" onclick="closeWhatsAppModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 16px; margin-bottom:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); display:block;">DEPORTISTA</span>
+                            <strong id="wa-ath-name" style="font-size:1rem; color:var(--text);">Alumno</strong>
+                            <div id="wa-ath-meta" style="font-size:0.78rem; color:var(--text-dim);">Categoría • Agrupación</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <span style="font-size:0.75rem; color:var(--text-muted); display:block;">DEUDA PENDIENTE</span>
+                            <strong id="wa-ath-debt" style="font-size:1.15rem; color:var(--danger);">$0</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="f-form-group" style="margin-bottom:12px;">
+                    <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO O WHATSAPP (CHILE +56 9...)</label>
+                    <input type="text" id="wa-phone-input" class="f-form-input" placeholder="Ej. 912345678 o +56912345678">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-dim); margin-top:5px; cursor:pointer;">
+                        <input type="checkbox" id="wa-save-phone-check" checked> Guardar este número en la ficha del alumno para futuros cobros
+                    </label>
+                </div>
+
+                <div class="f-form-group">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                        <label style="font-size:0.8rem; color:var(--text-muted);">MENSAJE DE COBRANZA (EDITABLE POR LA TESORERA)</label>
+                        <button type="button" onclick="resetWhatsAppTemplate()" style="background:transparent; border:none; color:var(--accent-light); font-size:0.75rem; cursor:pointer;">↺ Restaurar plantilla</button>
+                    </div>
+                    <textarea id="wa-message-textarea" class="f-form-input" style="height:170px; resize:vertical; font-size:0.85rem; line-height:1.5; font-family:inherit;"></textarea>
+                    <small style="color:var(--text-dim); font-size:0.75rem;">Puedes modificar libremente el texto antes de abrir el chat en WhatsApp Web.</small>
+                </div>
+            </div>
+            <div class="f-modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+                <button class="btn-action-sm" onclick="closeWhatsAppModal()">Cancelar</button>
+                <button id="btn-open-wa" class="btn-whatsapp" onclick="sendWhatsAppMessage()" style="background:#25D366; color:#000; font-weight:700; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                    <span>🚀</span> Abrir en WhatsApp Web
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: REGISTRAR / EDITAR EGRESO -->
+    <div id="f-expense-modal" class="f-modal-overlay hidden">
+        <div class="f-modal" style="max-width:520px;">
+            <div class="f-modal-header">
+                <h3 id="expense-modal-title">📉 Registrar Egreso / Gasto</h3>
+                <button class="f-modal-close" onclick="closeExpenseModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div class="split-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+                    <div>
+                        <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">FECHA</label>
+                        <input type="date" id="expense-date" class="f-form-input">
+                    </div>
+                    <div>
+                        <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">PERÍODO / MES</label>
+                        <select id="expense-period" class="f-form-select">
+                            <option value="SEPTIEMBRE-2026">Septiembre 2026</option>
+                            <option value="OCTUBRE-2026">Octubre 2026</option>
+                            <option value="NOVIEMBRE-2026">Noviembre 2026</option>
+                            <option value="DICIEMBRE-2026">Diciembre 2026</option>
+                            <option value="AGOSTO-2026">Agosto 2026</option>
+                            <option value="JULIO-2026">Julio 2026</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="f-form-group">
+                    <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">CATEGORÍA DE EGRESO</label>
+                    <select id="expense-category" class="f-form-select">
+                        <option value="ARRIENDO_GIMNASIO">🏢 Arriendo Canchas / Gimnasio</option>
+                        <option value="HONORARIOS_ENTRENADORES">🏐 Honorarios Entrenadores / Staff</option>
+                        <option value="TORNEOS_ARBITRAJE">🏆 Torneos, Arbitrajes y Ligas</option>
+                        <option value="MATERIALES_INDUMENTARIA">👕 Balones, Redes e Indumentaria</option>
+                        <option value="SERVICIOS_BASICOS">💡 Servicios, Software y Operación</option>
+                        <option value="OTROS">📦 Otros Gastos Varios</option>
+                    </select>
+                </div>
+
+                <div class="f-form-group">
+                    <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">BENEFICIARIO / PROVEEDOR / ENTRENADOR</label>
+                    <input type="text" id="expense-beneficiary" class="f-form-input" placeholder="Ej. Francisco Beltrán, Boston College, LINAME...">
+                </div>
+
+                <div class="split-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+                    <div>
+                        <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">MONTO ($ CLP)</label>
+                        <input type="number" id="expense-amount" class="f-form-input" placeholder="Ej. 150000">
+                    </div>
+                    <div>
+                        <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">MEDIO DE PAGO</label>
+                        <select id="expense-payment-method" class="f-form-select">
+                            <option value="TRANSFERENCIA">Transferencia</option>
+                            <option value="EFECTIVO">Efectivo</option>
+                            <option value="CHEQUE">Cheque</option>
+                            <option value="TARJETA">Tarjeta</option>
+                            <option value="OTRO">Otro</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="f-form-group">
+                    <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">N° COMPROBANTE / BOLETA / FACTURA</label>
+                    <input type="text" id="expense-receipt" class="f-form-input" placeholder="Ej. Bol-10492 / Transf #84920">
+                </div>
+
+                <div class="f-form-group">
+                    <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">NOTAS / OBSERVACIONES</label>
+                    <input type="text" id="expense-notes" class="f-form-input" placeholder="Detalle adicional del gasto...">
+                </div>
+            </div>
+            <div class="f-modal-footer">
+                <button class="btn-action-sm" onclick="closeExpenseModal()">Cancelar</button>
+                <button class="primary" onclick="saveExpense()">✓ Guardar Egreso</button>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <!-- PIE DE PÁGINA -->
@@ -181,6 +1275,10 @@
     <button class="mob-nav-btn" id="mob-favs" onclick="renderFavorites(); setMobileNav('mob-favs')">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
         <span>Favoritos</span>
+    </button>
+    <button class="mob-nav-btn" id="mob-finanzas" onclick="openFinanceModule(); setMobileNav('mob-finanzas')">
+        <span style="font-size:20px; line-height:22px;">💰</span>
+        <span>Pagos</span>
     </button>
 </nav>
 
