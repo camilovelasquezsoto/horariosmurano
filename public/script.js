@@ -1185,8 +1185,17 @@ function filterAthletesTable() {
         // Filtro Agrupación (Equipos Bayes)
         if (agrupacion !== 'TODAS' && a.agrupacion !== agrupacion) return false;
 
+        // Filtro Inactivos / Retirados vs Activos
+        const isAthInactive = a.status === 'INACTIVO' || a.status === 'RETIRADO';
+        if (semaforo === 'INACTIVO') {
+            if (!isAthInactive) return false;
+        } else {
+            // Por defecto ocultar alumnos inactivos o retirados
+            if (isAthInactive) return false;
+        }
+
         // Filtro Semáforo Deuda
-        if (semaforo !== 'TODOS') {
+        if (semaforo !== 'TODOS' && semaforo !== 'INACTIVO') {
             const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : a.payment_status === 'BECADO' ? 'BECADO' : 'AMARILLO');
             if (semaforo === 'AL_DIA' && sem !== 'AL_DIA' && a.payment_status !== 'PAGADO') return false;
             if (semaforo === 'AMARILLO' && sem !== 'AMARILLO') return false;
@@ -1279,9 +1288,14 @@ function renderAthletesTable(athletes) {
     tbody.innerHTML = athletes.map(a => {
         // Semáforo Deuda Badge
         let semaforoBadge = '';
+        const isInactive = a.status === 'INACTIVO' || a.status === 'RETIRADO';
         const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : a.payment_status === 'BECADO' ? 'BECADO' : 'AMARILLO');
         
-        if (sem === 'AL_DIA' || a.payment_status === 'PAGADO') {
+        if (isInactive) {
+            semaforoBadge = a.status === 'RETIRADO'
+                ? '<span class="badge-semaforo" style="background:#2a1b1b; color:#ff6b6b; border:1px solid #742a2a;">🚪 Retirado</span>'
+                : '<span class="badge-semaforo" style="background:#222; color:#888; border:1px solid #444;">💤 Inactivo</span>';
+        } else if (sem === 'AL_DIA' || a.payment_status === 'PAGADO') {
             semaforoBadge = '<span class="badge-semaforo badge-semaforo-al-dia">🟢 Al Día</span>';
         } else if (sem === 'BECADO' || a.payment_status === 'BECADO' || a.fee_type === 'BECA_COMPLETA') {
             semaforoBadge = '<span class="badge-semaforo badge-semaforo-becado">⚪ Becado</span>';
@@ -1298,10 +1312,10 @@ function renderAthletesTable(athletes) {
             <span class="rut-chip" title="${r.payer_name || 'Apoderado'}">${r.formatted_rut}</span>
         `).join('') || '<span style="color:var(--text-dim); font-size:0.75rem;">Sin RUT</span>';
 
-        const hasDebt = (a.debt_amount > 0 || (a.payment_status !== 'PAGADO' && a.payment_status !== 'BECADO' && a.fee_type !== 'BECA_COMPLETA'));
+        const hasDebt = !isInactive && (a.debt_amount > 0 || (a.payment_status !== 'PAGADO' && a.payment_status !== 'BECADO' && a.fee_type !== 'BECA_COMPLETA'));
 
         return `
-            <tr>
+            <tr style="${isInactive ? 'opacity:0.75; background:rgba(0,0,0,0.15);' : ''}">
                 <td>
                     <strong style="color:var(--text); font-size:0.92rem; display:block;">${a.full_name}</strong>
                     ${a.phone ? `<small style="color:var(--accent-light); font-size:0.75rem; display:block;">📞 ${a.phone}</small>` : ''}
@@ -1311,7 +1325,7 @@ function renderAthletesTable(athletes) {
                     <span class="badge-agrupacion" style="font-weight:600; font-size:0.84rem; display:inline-block;">${a.agrupacion || 'Sin Agrupación'}</span>
                 </td>
                 <td>${semaforoBadge}</td>
-                <td><strong>${(a.fee_type === 'BECADO' || a.fee_type === 'BECA_COMPLETA') ? '$0' : formatCLP(a.monthly_fee)}</strong></td>
+                <td><strong>${(a.fee_type === 'BECADO' || a.fee_type === 'BECA_COMPLETA' || isInactive) ? (isInactive ? '-' : '$0') : formatCLP(a.monthly_fee)}</strong></td>
                 <td style="color:${parseFloat(a.amount_paid) > 0 ? 'var(--success)' : 'var(--text-dim)'}; font-weight:700;">
                     ${formatCLP(a.amount_paid)}
                 </td>
@@ -1471,6 +1485,7 @@ function renderPendingMovements(movements) {
                             <input type="checkbox" id="assign-rem-${m.id}" checked> Recordar RUT
                         </label>
                         <div style="display:flex; gap:6px;">
+                            <button class="btn-action-sm" onclick="openCreateAthleteFromPending(${m.id})" title="Crear un alumno nuevo en el sistema y asignarle este pago de inmediato" style="color:var(--accent-light); font-weight:700;">➕ Nuevo</button>
                             <button class="btn-action-sm" onclick="openSplitMovementModal(${m.id})" title="Dividir este pago si es para 2 hermanos o varios conceptos">✂️ Dividir</button>
                             <button class="primary" style="padding:4px 10px; font-size:0.78rem;" onclick="assignMovement(${m.id})">✓ Asignar</button>
                         </div>
@@ -1493,19 +1508,30 @@ function searchAthletesForPending(movId, query) {
 
     const matches = allFinanceAthletes.filter(a => matchStudent(a, query)).slice(0, 8);
 
+    let html = '';
     if (matches.length === 0) {
-        resultsEl.innerHTML = `<div style="padding:8px 12px; font-size:0.8rem; color:var(--text-dim);">No se encontraron deportistas</div>`;
+        html = `<div style="padding:8px 12px; font-size:0.8rem; color:var(--text-dim); text-align:center;">No se encontraron deportistas</div>`;
     } else {
-        resultsEl.innerHTML = matches.map(a => `
+        html = matches.map(a => `
             <div class="ath-dropdown-item" onclick="selectAthleteForPending(${movId}, ${a.id}, '${escQ(a.full_name)}', '${escQ(a.category)}')">
                 <div>
                     <strong style="color:var(--text);">${a.full_name}</strong>
-                    <small style="color:var(--text-dim); display:block; font-size:0.75rem;">${a.category}</small>
+                    <small style="color:var(--text-dim); display:block; font-size:0.75rem;">${a.category} • ${a.agrupacion || 'Sin Agrupación'}</small>
                 </div>
                 <span style="font-weight:700; color:var(--accent-light); font-size:0.8rem;">${a.fee_type === 'BECADO' ? '$0' : formatCLP(a.monthly_fee)}</span>
             </div>
         `).join('');
     }
+
+    html += `
+        <div style="padding:6px; border-top:1px solid #333; background:rgba(255,255,255,0.03); text-align:center;">
+            <button type="button" class="btn-action-sm" onclick="openCreateAthleteFromPending(${movId}, '${escQ(query)}')" style="width:100%; font-size:0.78rem; padding:4px 8px; color:var(--accent-light); border-color:var(--accent-dim);">
+                ➕ Crear nuevo alumno "${escapeHtml(query)}"
+            </button>
+        </div>
+    `;
+
+    resultsEl.innerHTML = html;
     resultsEl.classList.remove('hidden');
 }
 
@@ -1528,9 +1554,9 @@ function clearPendingSelectedAthlete(movId) {
     }
 }
 
-async function assignMovement(movId) {
+async function assignMovement(movId, forcedAthleteId) {
     const valInput = document.getElementById(`pending-val-${movId}`);
-    const athleteId = valInput?.value;
+    const athleteId = forcedAthleteId !== undefined ? forcedAthleteId : valInput?.value;
     const chk = document.getElementById(`assign-rem-${movId}`);
     const conceptSel = document.getElementById(`pending-concept-${movId}`);
     const concept = conceptSel ? conceptSel.value : 'MENSUALIDAD';
@@ -1641,10 +1667,11 @@ function filterExtrasTable() {
         // Filtro Asignación Alumno / Botón Por Definir
         if (currentExtrasAssignedFilter === 'POR_DEFINIR') {
             if (m.category_concept !== 'POR_DEFINIR' && m.category_concept !== 'EXTRA') return false;
-        } else if (currentExtrasAssignedFilter === 'CON_ALUMNO' && !m.athlete_id) {
-            return false;
-        } else if (currentExtrasAssignedFilter === 'SIN_ALUMNO' && m.athlete_id) {
-            return false;
+        } else if (currentExtrasAssignedFilter === 'CON_ALUMNO') {
+            // Un pago se considera asignado solo si tiene alumno y su concepto no está por definir
+            if (!m.athlete_id || m.category_concept === 'POR_DEFINIR' || m.category_concept === 'EXTRA') return false;
+        } else if (currentExtrasAssignedFilter === 'SIN_ALUMNO') {
+            if (m.athlete_id) return false;
         }
 
         // Filtro Búsqueda Inteligente
@@ -2726,37 +2753,65 @@ function openAthleteModal(athleteId) {
         const agrupEl = document.getElementById('modal-ath-agrupacion');
         if (agrupEl) agrupEl.textContent = athlete.agrupacion || 'Sin Agrupación';
 
+        const isInactive = athlete.status === 'INACTIVO' || athlete.status === 'RETIRADO';
+
         const sem = athlete.debt_semaforo || (athlete.payment_status === 'PAGADO' ? 'AL_DIA' : athlete.payment_status === 'BECADO' ? 'BECADO' : 'AMARILLO');
         const semEl = document.getElementById('modal-ath-semaforo');
         if (semEl) {
-            semEl.className = 'badge-semaforo ' + (
-                sem === 'AL_DIA' ? 'badge-semaforo-al-dia' :
-                sem === 'BECADO' ? 'badge-semaforo-becado' :
-                sem === 'ROJO' ? 'badge-semaforo-rojo' :
-                sem === 'NARANJA' ? 'badge-semaforo-naranja' : 'badge-semaforo-amarillo'
-            );
-            semEl.textContent = sem === 'AL_DIA' ? '🟢 Al Día' :
-                                sem === 'BECADO' ? '⚪ Becado' :
-                                sem === 'ROJO' ? `🔴 ${athlete.unpaid_months ? `${athlete.unpaid_months} Meses` : '3+ Meses'}` :
-                                sem === 'NARANJA' ? '🟠 2 Meses' : '🟡 1 Mes';
+            if (isInactive) {
+                semEl.className = 'badge-semaforo';
+                semEl.style.background = '#222';
+                semEl.style.color = '#888';
+                semEl.textContent = athlete.status === 'RETIRADO' ? '🚪 Retirado' : '💤 Inactivo';
+            } else {
+                semEl.style.background = '';
+                semEl.style.color = '';
+                semEl.className = 'badge-semaforo ' + (
+                    sem === 'AL_DIA' ? 'badge-semaforo-al-dia' :
+                    sem === 'BECADO' ? 'badge-semaforo-becado' :
+                    sem === 'ROJO' ? 'badge-semaforo-rojo' :
+                    sem === 'NARANJA' ? 'badge-semaforo-naranja' : 'badge-semaforo-amarillo'
+                );
+                semEl.textContent = sem === 'AL_DIA' ? '🟢 Al Día' :
+                                    sem === 'BECADO' ? '⚪ Becado' :
+                                    sem === 'ROJO' ? `🔴 ${athlete.unpaid_months ? `${athlete.unpaid_months} Meses` : '3+ Meses'}` :
+                                    sem === 'NARANJA' ? '🟠 2 Meses' : '🟡 1 Mes';
+            }
         }
 
         // Status badge
         const stEl = document.getElementById('modal-ath-status');
         if (stEl) {
-            stEl.className = 'badge-status ' + (
-                athlete.payment_status === 'PAGADO' ? 'badge-ok' :
-                athlete.payment_status === 'BECADO' ? 'badge-becado' :
-                athlete.payment_status === 'PARCIAL' ? 'badge-parcial' : 'badge-deuda'
-            );
-            stEl.textContent = athlete.payment_status === 'PAGADO' ? 'Al Día' :
-                               athlete.payment_status === 'BECADO' ? 'Becado' :
-                               athlete.payment_status === 'PARCIAL' ? 'Parcial' : 'Con Deuda';
+            if (isInactive) {
+                stEl.className = 'badge-status';
+                stEl.style.background = '#333';
+                stEl.style.color = '#aaa';
+                stEl.textContent = athlete.status === 'RETIRADO' ? 'Retirado' : 'Inactivo';
+            } else {
+                stEl.style.background = '';
+                stEl.style.color = '';
+                stEl.className = 'badge-status ' + (
+                    athlete.payment_status === 'PAGADO' ? 'badge-ok' :
+                    athlete.payment_status === 'BECADO' ? 'badge-becado' :
+                    athlete.payment_status === 'PARCIAL' ? 'badge-parcial' : 'badge-deuda'
+                );
+                stEl.textContent = athlete.payment_status === 'PAGADO' ? 'Al Día' :
+                                   athlete.payment_status === 'BECADO' ? 'Becado' :
+                                   athlete.payment_status === 'PARCIAL' ? 'Parcial' : 'Con Deuda';
+            }
         }
 
         // Populate editable fields in Ficha details
         const editCat = document.getElementById('modal-edit-cat');
-        if (editCat) editCat.value = athlete.category || '';
+        if (editCat) {
+            if (athlete.category && !Array.from(editCat.options).some(o => o.value === athlete.category)) {
+                const opt = document.createElement('option');
+                opt.value = athlete.category;
+                opt.textContent = athlete.category;
+                editCat.appendChild(opt);
+            }
+            editCat.value = athlete.category || '';
+        }
 
         const editAgrup = document.getElementById('modal-edit-agrupacion');
         if (editAgrup) {
@@ -2778,16 +2833,24 @@ function openAthleteModal(athleteId) {
         const editPhone = document.getElementById('modal-edit-phone');
         if (editPhone) editPhone.value = athlete.phone || '';
 
+        const editApodPhone = document.getElementById('modal-edit-apoderado-phone');
+        if (editApodPhone) editApodPhone.value = athlete.apoderado_phone || '';
+
+        const editJoinDate = document.getElementById('modal-edit-join-date');
+        if (editJoinDate) {
+            editJoinDate.value = athlete.join_date ? new Date(athlete.join_date).toISOString().slice(0, 10) : '2026-09-01';
+        }
+
         const editStatus = document.getElementById('modal-edit-status');
         if (editStatus) editStatus.value = athlete.status || 'ACTIVO';
 
         const editNotes = document.getElementById('modal-edit-notes');
         if (editNotes) editNotes.value = athlete.notes || '';
 
-        // Botón de Cobranza WhatsApp en el modal
+        // Botón de Cobranza WhatsApp en el modal (oculto para inactivos/retirados)
         const btnWa = document.getElementById('btn-modal-wa-charge');
         if (btnWa) {
-            const hasDebt = athlete.debt_amount > 0 || (athlete.payment_status !== 'PAGADO' && athlete.payment_status !== 'BECADO' && athlete.fee_type !== 'BECA_COMPLETA');
+            const hasDebt = !isInactive && (athlete.debt_amount > 0 || (athlete.payment_status !== 'PAGADO' && athlete.payment_status !== 'BECADO' && athlete.fee_type !== 'BECA_COMPLETA'));
             btnWa.style.display = hasDebt ? 'inline-flex' : 'none';
         }
 
@@ -2868,6 +2931,8 @@ async function saveAthleteProfileChanges() {
     const feeType = document.getElementById('modal-edit-fee-type')?.value;
     const feeAmount = parseFloat(document.getElementById('modal-edit-fee-amount')?.value) || 0;
     const phone = document.getElementById('modal-edit-phone')?.value?.trim();
+    const apoderadoPhone = document.getElementById('modal-edit-apoderado-phone')?.value?.trim();
+    const joinDate = document.getElementById('modal-edit-join-date')?.value;
     const status = document.getElementById('modal-edit-status')?.value;
     const notes = document.getElementById('modal-edit-notes')?.value?.trim();
 
@@ -2881,18 +2946,22 @@ async function saveAthleteProfileChanges() {
                 fee_type: feeType,
                 monthly_fee: feeAmount,
                 phone: phone,
+                apoderado_phone: apoderadoPhone,
+                join_date: joinDate,
                 status: status,
                 notes: notes
             })
         });
 
         if (res.ok) {
-            toast('✅ Ficha, categoría y arancel actualizados con éxito');
+            toast('✅ Ficha, categoría, arancel y estado actualizados con éxito');
             currentActiveAthlete.category = cat;
             currentActiveAthlete.agrupacion = agrup;
             currentActiveAthlete.fee_type = feeType;
             currentActiveAthlete.monthly_fee = feeAmount;
             currentActiveAthlete.phone = phone;
+            currentActiveAthlete.apoderado_phone = apoderadoPhone;
+            currentActiveAthlete.join_date = joinDate;
             currentActiveAthlete.status = status;
             currentActiveAthlete.notes = notes;
 
@@ -3044,6 +3113,8 @@ async function submitManualPayment() {
 
 // ── MODAL: NUEVO DEPORTISTA ──
 
+let pendingMovementToAssignAfterCreate = null;
+
 function openNewAthleteModal() {
     document.getElementById('f-new-athlete-modal')?.classList.remove('hidden');
     autoSelectFeeType();
@@ -3051,6 +3122,61 @@ function openNewAthleteModal() {
 
 function closeNewAthleteModal() {
     document.getElementById('f-new-athlete-modal')?.classList.add('hidden');
+    pendingMovementToAssignAfterCreate = null;
+}
+
+function openCreateAthleteFromPending(movId, suggestedQuery) {
+    pendingMovementToAssignAfterCreate = movId;
+    const m = (allFinancePendingMovements && allFinancePendingMovements.find(x => x.id === movId)) || 
+              (allFinanceMovements && allFinanceMovements.find(x => x.id === movId));
+
+    const fNameInp = document.getElementById('new-ath-first-name');
+    const lNameInp = document.getElementById('new-ath-last-name');
+    const catSel = document.getElementById('new-ath-category');
+    const agrupSel = document.getElementById('new-ath-agrupacion');
+    const feeSel = document.getElementById('new-ath-fee-type');
+    const rutInp = document.getElementById('new-ath-initial-rut');
+    const payerInp = document.getElementById('new-ath-payer-name');
+    const phoneInp = document.getElementById('new-ath-phone');
+    const joinDateInp = document.getElementById('new-ath-join-date');
+    const notesInp = document.getElementById('new-ath-notes');
+
+    let firstName = '';
+    let lastName = '';
+
+    if (suggestedQuery && suggestedQuery.trim()) {
+        const parts = suggestedQuery.trim().split(/\s+/);
+        firstName = parts[0] || '';
+        lastName = parts.slice(1).join(' ') || '';
+    } else if (m && m.notes && !m.notes.includes('TEF') && !m.notes.includes('TRANSF') && !m.notes.includes('DE ')) {
+        const cleanNotes = m.notes.replace(/AGOSTO|SEPTIEMBRE|JULIO|\|/gi, '').trim();
+        const parts = cleanNotes.split(/\s+/);
+        if (parts.length >= 2) {
+            firstName = parts[0] || '';
+            lastName = parts.slice(1).join(' ') || '';
+        }
+    }
+
+    if (fNameInp) fNameInp.value = firstName;
+    if (lNameInp) lNameInp.value = lastName;
+    if (rutInp) rutInp.value = (m && m.payer_rut) ? formatRut(m.payer_rut) : '';
+    if (payerInp) payerInp.value = (m && m.payer_name) || '';
+    if (notesInp) notesInp.value = (m && m.notes) ? `Transferencia asociada: ${m.notes}` : '';
+
+    if (joinDateInp) {
+        if (m && m.date) joinDateInp.value = m.date.slice(0, 10);
+        else joinDateInp.value = new Date().toISOString().slice(0, 10);
+    }
+
+    // Auto seleccionar tipo de cuota si el monto es típico
+    if (m && m.amount) {
+        const amt = parseFloat(m.amount);
+        if (amt === 35000 && feeSel) feeSel.value = 'ADULTO';
+        else if (amt === 36000 && feeSel) feeSel.value = 'MINIVOLEY';
+        else if (amt === 50000 && feeSel) feeSel.value = 'REGULAR';
+    }
+
+    openNewAthleteModal();
 }
 
 function autoSelectFeeType() {
@@ -3077,13 +3203,16 @@ async function saveNewAthlete() {
     const firstName = document.getElementById('new-ath-first-name')?.value?.trim();
     const lastName = document.getElementById('new-ath-last-name')?.value?.trim();
     const category = document.getElementById('new-ath-category')?.value;
+    const agrupacion = document.getElementById('new-ath-agrupacion')?.value;
     const feeType = document.getElementById('new-ath-fee-type')?.value;
+    const joinDate = document.getElementById('new-ath-join-date')?.value;
+    const phone = document.getElementById('new-ath-phone')?.value?.trim();
     const initialRut = document.getElementById('new-ath-initial-rut')?.value?.trim();
     const payerName = document.getElementById('new-ath-payer-name')?.value?.trim();
     const notes = document.getElementById('new-ath-notes')?.value?.trim();
 
     if (!firstName || !lastName) {
-        return toast('Ingresa el nombre y apellido del deportista');
+        return toast('⚠️ Ingresa el nombre y apellido del deportista');
     }
 
     try {
@@ -3094,7 +3223,10 @@ async function saveNewAthlete() {
                 first_name: firstName,
                 last_name: lastName,
                 category: category,
+                agrupacion: agrupacion,
                 fee_type: feeType,
+                join_date: joinDate,
+                phone: phone,
                 initial_rut: initialRut,
                 payer_name: payerName,
                 notes: notes
@@ -3102,19 +3234,32 @@ async function saveNewAthlete() {
         });
 
         if (res.ok) {
+            const createdAthlete = await res.json();
             toast('✅ Deportista creado exitosamente');
             closeNewAthleteModal();
+
+            // Si se originó desde una transferencia por asignar, vincularla inmediatamente
+            if (pendingMovementToAssignAfterCreate && createdAthlete && createdAthlete.id) {
+                const movId = pendingMovementToAssignAfterCreate;
+                pendingMovementToAssignAfterCreate = null;
+                const conceptSel = document.getElementById(`pending-concept-${movId}`);
+                const concept = conceptSel ? conceptSel.value : 'MENSUALIDAD';
+                await assignMovement(movId, createdAthlete.id);
+                toast(`🎯 Transferencia asignada a ${createdAthlete.first_name} ${createdAthlete.last_name}`);
+            }
+
             loadFinanceData();
         } else {
-            toast('Error al crear deportista');
+            const errData = await res.json();
+            toast(errData.error || 'Error al crear deportista');
         }
     } catch (e) {
-        toast('Error de conexión');
+        toast('Error de conexión al crear deportista');
     }
 }
 
 function exportDebtorsCSV() {
-    const debtors = allFinanceAthletes.filter(a => a.debt_amount > 0 && a.fee_type !== 'BECADO' && a.fee_type !== 'BECA_COMPLETA');
+    const debtors = allFinanceAthletes.filter(a => a.debt_amount > 0 && a.fee_type !== 'BECADO' && a.fee_type !== 'BECA_COMPLETA' && a.status !== 'INACTIVO' && a.status !== 'RETIRADO');
     if (debtors.length === 0) return toast('No hay deudores en este período');
 
     let csv = 'Alumno,Agrupacion,Telefono,Cuota Mensual,Pagado,Deuda,Estado,RUTs Asociados,Notas\n';
@@ -3138,6 +3283,12 @@ function exportDebtorsCSV() {
 
 let currentWhatsAppAthlete = null;
 
+function isAdultCategory(athlete) {
+    if (!athlete) return false;
+    const cat = `${athlete.category || ''} ${athlete.agrupacion || ''}`.toLowerCase();
+    return cat.includes('tc') || cat.includes('master') || cat.includes('máster') || cat.includes('adulta') || cat.includes('adulto');
+}
+
 function openWhatsAppModal(athleteId) {
     const athlete = allFinanceAthletes.find(a => a.id === athleteId) || currentActiveAthlete;
     if (!athlete) return;
@@ -3149,11 +3300,36 @@ function openWhatsAppModal(athleteId) {
     const metaEl = document.getElementById('wa-ath-meta');
     const debtEl = document.getElementById('wa-ath-debt');
     const phoneInp = document.getElementById('wa-phone-input');
+    const recipBadge = document.getElementById('wa-recipient-badge');
+    const phoneLabel = document.getElementById('wa-phone-label');
+
+    const isAdult = isAdultCategory(athlete);
 
     if (nameEl) nameEl.textContent = athlete.full_name;
     if (metaEl) metaEl.textContent = `${athlete.category} • ${athlete.agrupacion || 'Sin agrupación'}`;
     if (debtEl) debtEl.textContent = formatCLP(debt);
-    if (phoneInp) phoneInp.value = athlete.phone || '';
+
+    if (isAdult) {
+        if (recipBadge) {
+            recipBadge.style.background = 'rgba(77, 171, 247, 0.2)';
+            recipBadge.style.color = '#4dabf7';
+            recipBadge.style.border = '1px solid rgba(77, 171, 247, 0.4)';
+            recipBadge.textContent = '👤 Contacto Directo: Deportista (Categoría TC / Adulto)';
+        }
+        if (phoneLabel) phoneLabel.textContent = 'TELÉFONO O WHATSAPP DEL DEPORTISTA';
+        if (phoneInp) phoneInp.value = athlete.phone || '';
+    } else {
+        if (recipBadge) {
+            recipBadge.style.background = 'rgba(255, 171, 0, 0.2)';
+            recipBadge.style.color = '#ffab00';
+            recipBadge.style.border = '1px solid rgba(255, 171, 0, 0.4)';
+            const ruts = athlete.payer_ruts || athlete.formatted_ruts || [];
+            const apodName = ruts.find(r => r.payer_name)?.payer_name || 'Apoderado/a';
+            recipBadge.textContent = `👨‍👩‍👧 Contacto: ${apodName} (Menor de edad)`;
+        }
+        if (phoneLabel) phoneLabel.textContent = 'TELÉFONO O WHATSAPP DEL APODERADO/A';
+        if (phoneInp) phoneInp.value = athlete.apoderado_phone || athlete.phone || '';
+    }
 
     resetWhatsAppTemplate();
     document.getElementById('f-whatsapp-modal')?.classList.remove('hidden');
@@ -3169,8 +3345,27 @@ function resetWhatsAppTemplate() {
     const a = currentWhatsAppAthlete;
     const debt = (a.debt_amount && a.debt_amount > 0) ? a.debt_amount : (a.monthly_fee || 50000);
     const period = currentFinancePeriod || 'el mes en curso';
+    const isAdult = isAdultCategory(a);
 
-    const template = `Hola estimad@ apoderad@ de ${a.full_name},
+    let template = '';
+    if (isAdult) {
+        template = `Hola ${a.first_name || a.full_name},
+
+Te escribimos desde la tesorería de Club Vóleibol Murano para recordarte amablemente que mantienes pendiente la cuota deportiva correspondiente a ${period} por un monto de ${formatCLP(debt)} (${a.category}${a.agrupacion ? ` - ${a.agrupacion}` : ''}).
+
+📋 Datos de transferencia:
+• Banco: Scotiabank
+• Tipo de cuenta: Cuenta Corriente
+• N° de cuenta: 123456789
+• Nombre: Club Deportivo Murano Voley
+• RUT: 65.123.456-7
+• Email: tesoreria@muranovoley.cl
+
+Favor remitir el comprobante de transferencia a este mismo chat para conciliar y mantener tu cuenta al día.
+
+¡Muchas gracias por tu compromiso continuo con el club! 🏐✨`;
+    } else {
+        template = `Hola estimad@ apoderad@ de ${a.full_name},
 
 Le escribimos desde la tesorería de Club Vóleibol Murano para recordarle amablemente que mantiene pendiente la cuota deportiva correspondiente a ${period} por un monto de ${formatCLP(debt)} (${a.category}${a.agrupacion ? ` - ${a.agrupacion}` : ''}).
 
@@ -3185,6 +3380,7 @@ Le escribimos desde la tesorería de Club Vóleibol Murano para recordarle amabl
 Favor remitir el comprobante de transferencia a este mismo chat para conciliar y mantener la ficha de ${a.full_name} al día.
 
 ¡Muchas gracias por su apoyo continuo al club! 🏐✨`;
+    }
 
     const txtArea = document.getElementById('wa-message-textarea');
     if (txtArea) txtArea.value = template;
@@ -3196,7 +3392,7 @@ async function sendWhatsAppMessage() {
     let rawPhone = (phoneInp?.value || '').trim();
 
     if (!rawPhone) {
-        return toast('⚠️ Por favor ingresa el número de teléfono o WhatsApp del apoderado');
+        return toast('⚠️ Por favor ingresa el número de teléfono o WhatsApp');
     }
 
     // Limpiar número (eliminar espacios, signos, guiones)
@@ -3207,16 +3403,27 @@ async function sendWhatsAppMessage() {
         cleanPhone = '569' + cleanPhone;
     }
 
-    // Si el checkbox está marcado, guardar el teléfono en el perfil del deportista
+    const isAdult = isAdultCategory(currentWhatsAppAthlete);
     const saveCheck = document.getElementById('wa-save-phone-check');
-    if (saveCheck && saveCheck.checked && rawPhone !== currentWhatsAppAthlete.phone) {
+
+    if (saveCheck && saveCheck.checked) {
         try {
+            const body = isAdult 
+                ? { phone: rawPhone } 
+                : { apoderado_phone: rawPhone, phone: currentWhatsAppAthlete.phone || rawPhone };
+
             await fetch(`${API_BASE_URL}/finance/athletes/${currentWhatsAppAthlete.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ phone: rawPhone })
+                body: JSON.stringify(body)
             });
-            currentWhatsAppAthlete.phone = rawPhone;
+
+            if (isAdult) {
+                currentWhatsAppAthlete.phone = rawPhone;
+            } else {
+                currentWhatsAppAthlete.apoderado_phone = rawPhone;
+                if (!currentWhatsAppAthlete.phone) currentWhatsAppAthlete.phone = rawPhone;
+            }
         } catch (e) {
             console.error('Error guardando teléfono:', e);
         }

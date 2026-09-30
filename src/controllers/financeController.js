@@ -61,29 +61,44 @@ exports.getAthletes = async (req, res) => {
                 a.category,
                 COALESCE(a.agrupacion, 'Sin Agrupación') as agrupacion,
                 a.phone,
+                a.apoderado_phone,
+                a.join_date,
+                a.rut,
+                a.email,
                 a.fee_type,
                 a.monthly_fee,
                 a.status,
                 a.notes,
                 a.created_at,
-                COALESCE(
+                COALESCE(ruts_agg.payer_ruts, '[]') as payer_ruts,
+                COALESCE(movs_agg.amount_paid, 0) as amount_paid,
+                COALESCE(movs_agg.extras_paid, 0) as extras_paid,
+                COALESCE(movs_agg.payments_count, 0) as payments_count
+            FROM athletes a
+            LEFT JOIN (
+                SELECT 
+                    athlete_id,
                     json_agg(
                         json_build_object(
-                            'id', r.id,
-                            'payer_rut', r.payer_rut,
-                            'payer_name', r.payer_name,
-                            'relationship', r.relationship
+                            'id', id,
+                            'payer_rut', payer_rut,
+                            'payer_name', payer_name,
+                            'relationship', relationship
                         )
-                    ) FILTER (WHERE r.id IS NOT NULL), '[]'
-                ) as payer_ruts,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept = 'MENSUALIDAD' AND m.category_concept != 'ANULADO'), 0) as amount_paid,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'MENSUALIDAD' AND m.category_concept != 'ANULADO'), 0) as extras_paid,
-                COUNT(m.id) FILTER (WHERE m.category_concept != 'ANULADO') as payments_count
-            FROM athletes a
-            LEFT JOIN athlete_payer_ruts r ON a.id = r.athlete_id
-            LEFT JOIN bank_movements m ON a.id = m.athlete_id 
-                AND (m.period = $1 OR ($1 = '' AND m.period IS NOT NULL))
-                AND m.status = 'CONCILIADO'
+                    ) as payer_ruts
+                FROM athlete_payer_ruts
+                GROUP BY athlete_id
+            ) ruts_agg ON a.id = ruts_agg.athlete_id
+            LEFT JOIN (
+                SELECT 
+                    athlete_id,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept = 'MENSUALIDAD' AND category_concept != 'ANULADO'), 0) as amount_paid,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO'), 0) as extras_paid,
+                    COUNT(id) FILTER (WHERE category_concept != 'ANULADO') as payments_count
+                FROM bank_movements
+                WHERE status = 'CONCILIADO' AND (period = $1 OR ($1 = '' AND period IS NOT NULL))
+                GROUP BY athlete_id
+            ) movs_agg ON a.id = movs_agg.athlete_id
             WHERE 1=1
         `;
         const params = [currentPeriod];
@@ -99,9 +114,14 @@ exports.getAthletes = async (req, res) => {
             params.push(agrupacion);
         }
 
-        if (status && status !== 'TODOS') {
+        if (status === 'INACTIVO' || status === 'RETIRADO') {
+            query += ` AND a.status IN ('INACTIVO', 'RETIRADO')`;
+        } else if (status && status !== 'TODOS') {
             query += ` AND a.status = $${pIdx++}`;
             params.push(status);
+        } else if (!status || status !== 'TODOS') {
+            // Por defecto, ocultar alumnos inactivos o retirados de la nómina y cuotas
+            query += ` AND a.status NOT IN ('INACTIVO', 'RETIRADO')`;
         }
 
         if (search) {
@@ -122,7 +142,6 @@ exports.getAthletes = async (req, res) => {
         }
 
         query += `
-            GROUP BY a.id
             ORDER BY a.category ASC, a.last_name ASC, a.first_name ASC
         `;
 
@@ -140,6 +159,14 @@ exports.getAthletes = async (req, res) => {
             historyMap[`${r.athlete_id}_${r.period}`] = parseFloat(r.paid);
         });
 
+        const periodDates = {
+            'JULIO-2026': '2026-07-01',
+            'AGOSTO-2026': '2026-08-01',
+            'SEPTIEMBRE-2026': '2026-09-01',
+            'OCTUBRE-2026': '2026-10-01',
+            'NOVIEMBRE-2026': '2026-11-01',
+            'DICIEMBRE-2026': '2026-12-01'
+        };
         const orderedPeriods = ['JULIO-2026', 'AGOSTO-2026', 'SEPTIEMBRE-2026', 'OCTUBRE-2026', 'NOVIEMBRE-2026', 'DICIEMBRE-2026'];
         const curIdx = orderedPeriods.indexOf(currentPeriod) >= 0 ? orderedPeriods.indexOf(currentPeriod) : 2;
 
@@ -152,7 +179,13 @@ exports.getAthletes = async (req, res) => {
             let debt_semaforo = 'AMARILLO';
             let unpaid_months = 0;
 
-            if (row.status === 'BECADO' || row.fee_type === 'BECADO' || row.fee_type === 'BECA_COMPLETA' || fee === 0) {
+            const isInactive = row.status === 'INACTIVO' || row.status === 'RETIRADO';
+
+            if (isInactive) {
+                payment_status = row.status;
+                debt_semaforo = 'INACTIVO';
+                unpaid_months = 0;
+            } else if (row.status === 'BECADO' || row.fee_type === 'BECADO' || row.fee_type === 'BECA_COMPLETA' || fee === 0) {
                 payment_status = 'BECADO';
                 debt_semaforo = 'BECADO';
                 unpaid_months = 0;
@@ -164,9 +197,19 @@ exports.getAthletes = async (req, res) => {
                 if (paid > 0) payment_status = 'PARCIAL';
                 unpaid_months = 1;
 
-                // Revisar meses previos consecutivos impagos
+                // Formato ISO para join_date
+                const athleteJoinDate = row.join_date ? new Date(row.join_date).toISOString().slice(0, 10) : '2026-09-01';
+
+                // Revisar meses previos consecutivos impagos SOLO si el alumno ya pertenecía al club en ese periodo
                 for (let i = curIdx - 1; i >= 0; i--) {
                     const prevP = orderedPeriods[i];
+                    const prevPDate = periodDates[prevP];
+                    
+                    // Si el periodo previo es anterior a la fecha de ingreso del deportista, NO genera deuda
+                    if (prevPDate < athleteJoinDate) {
+                        break;
+                    }
+
                     const prevPaid = historyMap[`${row.id}_${prevP}`] || 0;
                     if (prevPaid < fee) {
                         unpaid_months++;
@@ -190,8 +233,8 @@ exports.getAthletes = async (req, res) => {
                 debt_semaforo,
                 unpaid_months,
                 extras_paid: extras,
-                debt_amount: Math.max(0, fee - paid),
-                debt_total_accumulated: unpaid_months > 0 ? (unpaid_months * fee - (paid > 0 && paid < fee ? paid : 0)) : 0
+                debt_amount: isInactive ? 0 : Math.max(0, fee - paid),
+                debt_total_accumulated: isInactive ? 0 : (unpaid_months > 0 ? (unpaid_months * fee - (paid > 0 && paid < fee ? paid : 0)) : 0)
             };
         });
 
@@ -214,10 +257,10 @@ exports.getAthletes = async (req, res) => {
 // 2. Crear nuevo deportista
 exports.createAthlete = async (req, res) => {
     try {
-        const { first_name, last_name, category, fee_type, monthly_fee, status, notes, initial_rut, payer_name } = req.body;
+        const { first_name, last_name, category, agrupacion, fee_type, monthly_fee, status, notes, initial_rut, payer_name, phone, apoderado_phone, join_date } = req.body;
         
         let calculatedFee = monthly_fee;
-        if (!calculatedFee) {
+        if (calculatedFee === undefined || calculatedFee === null || calculatedFee === '') {
             const cat = (category || '').toLowerCase();
             if (fee_type === 'BECADO' || status === 'BECADO') calculatedFee = 0;
             else if (cat.includes('master') || cat.includes('máster')) calculatedFee = 36000;
@@ -226,10 +269,12 @@ exports.createAthlete = async (req, res) => {
             else calculatedFee = 50000;
         }
 
+        const validJoinDate = join_date ? join_date : '2026-09-01';
+
         const insertAthlete = await pool.query(
-            `INSERT INTO athletes (first_name, last_name, category, fee_type, monthly_fee, status, notes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [first_name.trim(), last_name.trim(), category.trim(), fee_type || 'REGULAR', calculatedFee, status || 'ACTIVO', notes || '']
+            `INSERT INTO athletes (first_name, last_name, category, agrupacion, fee_type, monthly_fee, status, phone, apoderado_phone, join_date, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+            [first_name.trim(), last_name.trim(), (category || 'Sin Categoría').trim(), (agrupacion || '').trim(), fee_type || 'REGULAR', calculatedFee, status || 'ACTIVO', phone || '', apoderado_phone || '', validJoinDate, notes || '']
         );
         const athlete = insertAthlete.rows[0];
 
@@ -254,7 +299,7 @@ exports.createAthlete = async (req, res) => {
 exports.updateAthlete = async (req, res) => {
     try {
         const { id } = req.params;
-        const { first_name, last_name, category, agrupacion, fee_type, monthly_fee, status, phone, notes } = req.body;
+        const { first_name, last_name, category, agrupacion, fee_type, monthly_fee, status, phone, apoderado_phone, join_date, notes } = req.body;
 
         const curRes = await pool.query('SELECT * FROM athletes WHERE id = $1', [id]);
         if (curRes.rows.length === 0) {
@@ -270,14 +315,16 @@ exports.updateAthlete = async (req, res) => {
         const newFee = monthly_fee !== undefined ? parseFloat(monthly_fee) : cur.monthly_fee;
         const newStatus = status !== undefined ? status : cur.status;
         const newPhone = phone !== undefined ? phone.trim() : cur.phone;
+        const newApodPhone = apoderado_phone !== undefined ? apoderado_phone.trim() : cur.apoderado_phone;
+        const newJoinDate = join_date !== undefined ? join_date : (cur.join_date ? new Date(cur.join_date).toISOString().slice(0, 10) : '2026-09-01');
         const newNotes = notes !== undefined ? notes : cur.notes;
 
         const result = await pool.query(
             `UPDATE athletes 
              SET first_name = $1, last_name = $2, category = $3, agrupacion = $4, fee_type = $5, 
-                 monthly_fee = $6, status = $7, phone = $8, notes = $9
-             WHERE id = $10 RETURNING *`,
-            [newFirst, newLast, newCat, newAgrup, newFeeType, newFee, newStatus, newPhone, newNotes, id]
+                 monthly_fee = $6, status = $7, phone = $8, apoderado_phone = $9, join_date = $10, notes = $11
+             WHERE id = $12 RETURNING *`,
+            [newFirst, newLast, newCat, newAgrup, newFeeType, newFee, newStatus, newPhone, newApodPhone, newJoinDate, newNotes, id]
         );
 
         res.json(result.rows[0]);
@@ -849,13 +896,14 @@ exports.getSummary = async (req, res) => {
         const { period } = req.query;
         const currentPeriod = period || 'SEPTIEMBRE-2026';
 
-        // 1. Total deportistas y arancel esperado
+        // 1. Total deportistas y arancel esperado (excluyendo inactivos y retirados)
         const athletesRes = await pool.query(`
             SELECT 
-                COUNT(*) as total_athletes,
-                COUNT(*) FILTER (WHERE status = 'BECADO' OR fee_type = 'BECADO') as total_becados,
+                COUNT(*) FILTER (WHERE status NOT IN ('INACTIVO', 'RETIRADO')) as total_athletes,
+                COUNT(*) FILTER (WHERE (status = 'BECADO' OR fee_type = 'BECADO') AND status NOT IN ('INACTIVO', 'RETIRADO')) as total_becados,
                 COUNT(*) FILTER (WHERE status = 'ACTIVO' AND fee_type != 'BECADO') as total_activos_cobro,
-                COALESCE(SUM(monthly_fee) FILTER (WHERE status = 'ACTIVO' AND fee_type != 'BECADO'), 0) as total_esperado
+                COALESCE(SUM(monthly_fee) FILTER (WHERE status = 'ACTIVO' AND fee_type != 'BECADO'), 0) as total_esperado,
+                COUNT(*) FILTER (WHERE status IN ('INACTIVO', 'RETIRADO')) as total_inactivos
             FROM athletes
         `);
 
@@ -899,7 +947,7 @@ exports.getSummary = async (req, res) => {
             WHERE period = $1 AND status = 'PENDIENTE'
         `, [currentPeriod]);
 
-        // 6. Desglose por categoría
+        // 6. Desglose por categoría (solo alumnos activos)
         const categoryRes = await pool.query(`
             SELECT 
                 a.category,
@@ -911,11 +959,12 @@ exports.getSummary = async (req, res) => {
                 COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'ANULADO'), 0) as recaudado
             FROM athletes a
             LEFT JOIN bank_movements m ON a.id = m.athlete_id AND m.period = $1 AND m.status = 'CONCILIADO'
+            WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
             GROUP BY a.category
             ORDER BY a.category ASC
         `, [currentPeriod]);
 
-        // 7. Desglose por agrupación (Equipos Bayes)
+        // 7. Desglose por agrupación (Equipos Bayes - solo alumnos activos)
         const agrupacionesRes = await pool.query(`
             SELECT 
                 COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación') as agrupacion,
@@ -927,6 +976,7 @@ exports.getSummary = async (req, res) => {
                 COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'ANULADO'), 0) as recaudado
             FROM athletes a
             LEFT JOIN bank_movements m ON a.id = m.athlete_id AND m.period = $1 AND m.status = 'CONCILIADO'
+            WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
             GROUP BY COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación')
             ORDER BY agrupacion ASC
         `, [currentPeriod]);
@@ -969,6 +1019,7 @@ exports.getSummary = async (req, res) => {
             alumnos_pagaron: parseInt(mensualidadesRes.rows[0].total_alumnos_pagaron, 10),
             total_activos: parseInt(athletesRes.rows[0].total_activos_cobro, 10),
             total_becados: parseInt(athletesRes.rows[0].total_becados, 10),
+            total_inactivos: parseInt(athletesRes.rows[0].total_inactivos, 10),
             pendientes_asignar: {
                 cantidad: parseInt(pendingRes.rows[0].count_pendientes, 10),
                 monto: parseFloat(pendingRes.rows[0].total_monto_pendiente)

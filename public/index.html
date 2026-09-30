@@ -223,6 +223,7 @@
                     <option value="NARANJA">🟠 2 Meses Pendientes</option>
                     <option value="ROJO">🔴 3+ Meses (Deuda)</option>
                     <option value="BECADO">⚪ Becados</option>
+                    <option value="INACTIVO">💤 Inactivos / Retirados</option>
                 </select>
 
                 <select id="f-fee-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:150px;">
@@ -674,7 +675,23 @@
                     <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div>
                             <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">CATEGORÍA OFICIAL (EDAD)</label>
-                            <select id="modal-edit-cat" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;"></select>
+                            <select id="modal-edit-cat" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;">
+                                <option value="U10 Damas F">U10 Damas F</option>
+                                <option value="U11 Damas F">U11 Damas F</option>
+                                <option value="U12 Damas F">U12 Damas F</option>
+                                <option value="U12 Varones M">U12 Varones M</option>
+                                <option value="U13 Damas F">U13 Damas F</option>
+                                <option value="U14 Damas F">U14 Damas F</option>
+                                <option value="U14 Varones M">U14 Varones M</option>
+                                <option value="U15 Damas F">U15 Damas F</option>
+                                <option value="U16 Damas F">U16 Damas F</option>
+                                <option value="U16 Varones M">U16 Varones M</option>
+                                <option value="U18 Damas F">U18 Damas F</option>
+                                <option value="U18 Varones M">U18 Varones M</option>
+                                <option value="TC Damas F">TC Damas F</option>
+                                <option value="TC Varones M">TC Varones M</option>
+                                <option value="Máster">Máster</option>
+                            </select>
                         </div>
                         <div>
                             <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">AGRUPACIÓN (EQUIPO BAYES)</label>
@@ -712,15 +729,23 @@
                             <input type="number" id="modal-edit-fee-amount" class="f-form-input" style="font-size:0.85rem; padding:6px 8px;">
                         </div>
                         <div>
-                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO / WHATSAPP</label>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO DEPORTISTA (O TC)</label>
                             <input type="text" id="modal-edit-phone" class="f-form-input" placeholder="+56 9 1234 5678" style="font-size:0.85rem; padding:6px 8px;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO APODERADO/A (MENORES)</label>
+                            <input type="text" id="modal-edit-apoderado-phone" class="f-form-input" placeholder="+56 9 8765 4321" style="font-size:0.85rem; padding:6px 8px;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">FECHA DE INGRESO AL CLUB</label>
+                            <input type="date" id="modal-edit-join-date" class="f-form-input" style="font-size:0.85rem; padding:6px 8px;">
                         </div>
                         <div>
                             <label style="font-size:0.75rem; color:var(--text-muted); display:block; margin-bottom:4px;">ESTADO ALUMNO</label>
                             <select id="modal-edit-status" class="f-form-select" style="font-size:0.82rem; padding:6px 8px;">
                                 <option value="ACTIVO">Activo</option>
-                                <option value="INACTIVO">Inactivo</option>
-                                <option value="RETIRADO">Retirado</option>
+                                <option value="INACTIVO">Inactivo (No genera deuda)</option>
+                                <option value="RETIRADO">Retirado (No genera deuda)</option>
                             </select>
                         </div>
                         <div style="grid-column: span 2;">
@@ -830,16 +855,41 @@
                 <div class="f-form-group">
                     <label>Categoría</label>
                     <select id="new-ath-category" class="f-form-select" onchange="autoSelectFeeType()">
+                        <option value="U12 Damas F">U12 Damas F (Regular $50.000)</option>
+                        <option value="U12 Varones M">U12 Varones M (Regular $50.000)</option>
                         <option value="U14 Damas F">U14 Damas F (Regular $50.000)</option>
+                        <option value="U14 Varones M">U14 Varones M (Regular $50.000)</option>
                         <option value="U16 Damas F">U16 Damas F (Regular $50.000)</option>
+                        <option value="U16 Varones M">U16 Varones M (Regular $50.000)</option>
                         <option value="U18 Damas F">U18 Damas F (Regular $50.000)</option>
+                        <option value="U18 Varones M">U18 Varones M (Regular $50.000)</option>
                         <option value="TC Damas F">TC Damas F (Adulta $35.000)</option>
                         <option value="TC Varones M">TC Varones M (Adulta $35.000)</option>
-                        <option value="U16 Varones M">U16 Varones M (Regular $50.000)</option>
-                        <option value="U18 Varones M">U18 Varones M (Regular $50.000)</option>
                         <option value="U11 Damas F">U11 Damas F (Minivóley $36.000)</option>
                         <option value="U10 Damas F">U10 Damas F (Minivóley $36.000)</option>
                         <option value="Máster">Máster (Máster $36.000)</option>
+                    </select>
+                </div>
+                <div class="f-form-group">
+                    <label>Agrupación (Equipo Bayes)</label>
+                    <select id="new-ath-agrupacion" class="f-form-select">
+                        <option value="">Seleccionar Agrupación...</option>
+                        <option value="Master">Master</option>
+                        <option value="Minivoley">Minivoley</option>
+                        <option value="TC Damas">TC Damas</option>
+                        <option value="TC Varones">TC Varones</option>
+                        <option value="U12 G1 Damas">U12 G1 Damas</option>
+                        <option value="U12 G2 Damas">U12 G2 Damas</option>
+                        <option value="U14 G1 Damas">U14 G1 Damas</option>
+                        <option value="U14 G2 Damas">U14 G2 Damas</option>
+                        <option value="U14 Varones">U14 Varones</option>
+                        <option value="U16 G1 Damas">U16 G1 Damas</option>
+                        <option value="U16 G2 Damas">U16 G2 Damas</option>
+                        <option value="U16 Varones">U16 Varones</option>
+                        <option value="U18 Damas">U18 Damas</option>
+                        <option value="U18 Varones">U18 Varones</option>
+                        <option value="PF U14 G1 Damas">PF U14 G1 Damas</option>
+                        <option value="PF U16 G1 Damas">PF U16 G1 Damas</option>
                     </select>
                 </div>
                 <div class="f-form-group">
@@ -851,6 +901,14 @@
                         <option value="MASTER">Máster ($36.000)</option>
                         <option value="BECADO">Becado ($0)</option>
                     </select>
+                </div>
+                <div class="f-form-group">
+                    <label>Fecha de Ingreso al Club (Para cálculo de cuota/deuda)</label>
+                    <input type="date" id="new-ath-join-date" class="f-form-input">
+                </div>
+                <div class="f-form-group">
+                    <label>Teléfono de Contacto (Apoderado / Alumno)</label>
+                    <input type="text" id="new-ath-phone" class="f-form-input" placeholder="+56 9...">
                 </div>
                 <div class="f-form-group">
                     <label>RUT de Apoderado / Pagador Inicial (Opcional)</label>
@@ -1110,7 +1168,8 @@
                         <div>
                             <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); display:block;">DEPORTISTA</span>
                             <strong id="wa-ath-name" style="font-size:1rem; color:var(--text);">Alumno</strong>
-                            <div id="wa-ath-meta" style="font-size:0.78rem; color:var(--text-dim);">Categoría • Agrupación</div>
+                            <div id="wa-ath-meta" style="font-size:0.78rem; color:var(--text-dim); margin-bottom:4px;">Categoría • Agrupación</div>
+                            <span id="wa-recipient-badge" style="font-size:0.75rem; padding:2px 8px; border-radius:4px; font-weight:700;"></span>
                         </div>
                         <div style="text-align:right;">
                             <span style="font-size:0.75rem; color:var(--text-muted); display:block;">DEUDA PENDIENTE</span>
@@ -1120,7 +1179,7 @@
                 </div>
 
                 <div class="f-form-group" style="margin-bottom:12px;">
-                    <label style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO O WHATSAPP (CHILE +56 9...)</label>
+                    <label id="wa-phone-label" style="font-size:0.8rem; color:var(--text-muted); display:block; margin-bottom:4px;">TELÉFONO O WHATSAPP DEL APODERADO/A (CHILE +56 9...)</label>
                     <input type="text" id="wa-phone-input" class="f-form-input" placeholder="Ej. 912345678 o +56912345678">
                     <label style="display:flex; align-items:center; gap:6px; font-size:0.78rem; color:var(--text-dim); margin-top:5px; cursor:pointer;">
                         <input type="checkbox" id="wa-save-phone-check" checked> Guardar este número en la ficha del alumno para futuros cobros
