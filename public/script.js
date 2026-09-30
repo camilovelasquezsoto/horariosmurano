@@ -1066,11 +1066,11 @@ function populateCategoryFilter(athletes) {
         if (agrups.includes(currentAgrup)) selAgrup.value = currentAgrup;
     }
 
-    if (modalCat && modalCat.options.length === 0) {
+    if (modalCat) {
         modalCat.innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join('');
     }
 
-    if (modalAgrup && modalAgrup.options.length <= 1) {
+    if (modalAgrup) {
         modalAgrup.innerHTML = agrups.map(ag => `<option value="${ag}">${ag}</option>`).join('');
     }
 }
@@ -2697,83 +2697,110 @@ function renderModalRuts(athlete) {
     `).join('');
 }
 
-async function openAthleteModal(athleteId) {
-    const athlete = allFinanceAthletes.find(a => a.id === athleteId);
-    if (!athlete) return;
-    currentActiveAthlete = athlete;
+function openAthleteModal(athleteId) {
+    try {
+        const athlete = allFinanceAthletes.find(a => String(a.id) === String(athleteId));
+        if (!athlete) {
+            toast('⚠️ No se encontró la información del deportista');
+            return;
+        }
+        currentActiveAthlete = athlete;
 
-    // Mostrar el modal inmediatamente
-    document.getElementById('f-athlete-modal')?.classList.remove('hidden');
+        // Mostrar el modal inmediatamente
+        const modal = document.getElementById('f-athlete-modal');
+        if (modal) modal.classList.remove('hidden');
 
-    document.getElementById('modal-ath-name').textContent = athlete.full_name;
-    document.getElementById('modal-ath-cat').textContent = athlete.category;
-    document.getElementById('modal-ath-fee').textContent = (athlete.fee_type === 'BECADO' || athlete.fee_type === 'BECA_COMPLETA') ? '$0 (Becado)' : formatCLP(athlete.monthly_fee);
-    document.getElementById('modal-ath-notes').value = athlete.notes || '';
+        const elName = document.getElementById('modal-ath-name');
+        if (elName) elName.textContent = athlete.full_name;
 
-    // Agrupación & Semáforo badges in modal
-    const agrupEl = document.getElementById('modal-ath-agrupacion');
-    if (agrupEl) agrupEl.textContent = athlete.agrupacion || 'Sin Agrupación';
+        const elCat = document.getElementById('modal-ath-cat');
+        if (elCat) elCat.textContent = athlete.category || 'Sin Categoría';
 
-    const sem = athlete.debt_semaforo || (athlete.payment_status === 'PAGADO' ? 'AL_DIA' : athlete.payment_status === 'BECADO' ? 'BECADO' : 'AMARILLO');
-    const semEl = document.getElementById('modal-ath-semaforo');
-    if (semEl) {
-        semEl.className = 'badge-semaforo ' + (
-            sem === 'AL_DIA' ? 'badge-semaforo-al-dia' :
-            sem === 'BECADO' ? 'badge-semaforo-becado' :
-            sem === 'ROJO' ? 'badge-semaforo-rojo' :
-            sem === 'NARANJA' ? 'badge-semaforo-naranja' : 'badge-semaforo-amarillo'
-        );
-        semEl.textContent = sem === 'AL_DIA' ? '🟢 Al Día' :
-                            sem === 'BECADO' ? '⚪ Becado' :
-                            sem === 'ROJO' ? `🔴 ${athlete.unpaid_months ? `${athlete.unpaid_months} Meses` : '3+ Meses'}` :
-                            sem === 'NARANJA' ? '🟠 2 Meses' : '🟡 1 Mes';
+        const elFee = document.getElementById('modal-ath-fee');
+        if (elFee) elFee.textContent = (athlete.fee_type === 'BECADO' || athlete.fee_type === 'BECA_COMPLETA') ? '$0 (Becado)' : formatCLP(athlete.monthly_fee);
+
+        const elNotes = document.getElementById('modal-ath-notes');
+        if (elNotes) elNotes.value = athlete.notes || '';
+
+        // Agrupación & Semáforo badges in modal
+        const agrupEl = document.getElementById('modal-ath-agrupacion');
+        if (agrupEl) agrupEl.textContent = athlete.agrupacion || 'Sin Agrupación';
+
+        const sem = athlete.debt_semaforo || (athlete.payment_status === 'PAGADO' ? 'AL_DIA' : athlete.payment_status === 'BECADO' ? 'BECADO' : 'AMARILLO');
+        const semEl = document.getElementById('modal-ath-semaforo');
+        if (semEl) {
+            semEl.className = 'badge-semaforo ' + (
+                sem === 'AL_DIA' ? 'badge-semaforo-al-dia' :
+                sem === 'BECADO' ? 'badge-semaforo-becado' :
+                sem === 'ROJO' ? 'badge-semaforo-rojo' :
+                sem === 'NARANJA' ? 'badge-semaforo-naranja' : 'badge-semaforo-amarillo'
+            );
+            semEl.textContent = sem === 'AL_DIA' ? '🟢 Al Día' :
+                                sem === 'BECADO' ? '⚪ Becado' :
+                                sem === 'ROJO' ? `🔴 ${athlete.unpaid_months ? `${athlete.unpaid_months} Meses` : '3+ Meses'}` :
+                                sem === 'NARANJA' ? '🟠 2 Meses' : '🟡 1 Mes';
+        }
+
+        // Status badge
+        const stEl = document.getElementById('modal-ath-status');
+        if (stEl) {
+            stEl.className = 'badge-status ' + (
+                athlete.payment_status === 'PAGADO' ? 'badge-ok' :
+                athlete.payment_status === 'BECADO' ? 'badge-becado' :
+                athlete.payment_status === 'PARCIAL' ? 'badge-parcial' : 'badge-deuda'
+            );
+            stEl.textContent = athlete.payment_status === 'PAGADO' ? 'Al Día' :
+                               athlete.payment_status === 'BECADO' ? 'Becado' :
+                               athlete.payment_status === 'PARCIAL' ? 'Parcial' : 'Con Deuda';
+        }
+
+        // Populate editable fields in Ficha details
+        const editCat = document.getElementById('modal-edit-cat');
+        if (editCat) editCat.value = athlete.category || '';
+
+        const editAgrup = document.getElementById('modal-edit-agrupacion');
+        if (editAgrup) {
+            if (athlete.agrupacion && !Array.from(editAgrup.options).some(o => o.value === athlete.agrupacion)) {
+                const opt = document.createElement('option');
+                opt.value = athlete.agrupacion;
+                opt.textContent = athlete.agrupacion;
+                editAgrup.appendChild(opt);
+            }
+            editAgrup.value = athlete.agrupacion || '';
+        }
+
+        const editFeeType = document.getElementById('modal-edit-fee-type');
+        if (editFeeType) editFeeType.value = athlete.fee_type || 'REGULAR';
+
+        const editFeeAmt = document.getElementById('modal-edit-fee-amount');
+        if (editFeeAmt) editFeeAmt.value = athlete.monthly_fee || 50000;
+
+        const editPhone = document.getElementById('modal-edit-phone');
+        if (editPhone) editPhone.value = athlete.phone || '';
+
+        const editStatus = document.getElementById('modal-edit-status');
+        if (editStatus) editStatus.value = athlete.status || 'ACTIVO';
+
+        const editNotes = document.getElementById('modal-edit-notes');
+        if (editNotes) editNotes.value = athlete.notes || '';
+
+        // Botón de Cobranza WhatsApp en el modal
+        const btnWa = document.getElementById('btn-modal-wa-charge');
+        if (btnWa) {
+            const hasDebt = athlete.debt_amount > 0 || (athlete.payment_status !== 'PAGADO' && athlete.payment_status !== 'BECADO' && athlete.fee_type !== 'BECA_COMPLETA');
+            btnWa.style.display = hasDebt ? 'inline-flex' : 'none';
+        }
+
+        renderModalRuts(athlete);
+
+        // Cargar historial de pagos de forma desacoplada
+        loadAthleteMovementsHistory(athlete.id);
+    } catch (err) {
+        console.error('Error al abrir ficha:', err);
     }
+}
 
-    // Status badge
-    const stEl = document.getElementById('modal-ath-status');
-    if (stEl) {
-        stEl.className = 'badge-status ' + (
-            athlete.payment_status === 'PAGADO' ? 'badge-ok' :
-            athlete.payment_status === 'BECADO' ? 'badge-becado' :
-            athlete.payment_status === 'PARCIAL' ? 'badge-parcial' : 'badge-deuda'
-        );
-        stEl.textContent = athlete.payment_status === 'PAGADO' ? 'Al Día' :
-                           athlete.payment_status === 'BECADO' ? 'Becado' :
-                           athlete.payment_status === 'PARCIAL' ? 'Parcial' : 'Con Deuda';
-    }
-
-    // Populate editable fields in Ficha details
-    const editCat = document.getElementById('modal-edit-cat');
-    if (editCat) editCat.value = athlete.category || '';
-
-    const editAgrup = document.getElementById('modal-edit-agrupacion');
-    if (editAgrup) editAgrup.value = athlete.agrupacion || 'U14 G1 Damas';
-
-    const editFeeType = document.getElementById('modal-edit-fee-type');
-    if (editFeeType) editFeeType.value = athlete.fee_type || 'REGULAR';
-
-    const editFeeAmt = document.getElementById('modal-edit-fee-amount');
-    if (editFeeAmt) editFeeAmt.value = athlete.monthly_fee || 50000;
-
-    const editPhone = document.getElementById('modal-edit-phone');
-    if (editPhone) editPhone.value = athlete.phone || '';
-
-    const editStatus = document.getElementById('modal-edit-status');
-    if (editStatus) editStatus.value = athlete.status || 'ACTIVO';
-
-    const editNotes = document.getElementById('modal-edit-notes');
-    if (editNotes) editNotes.value = athlete.notes || '';
-
-    // Botón de Cobranza WhatsApp en el modal
-    const btnWa = document.getElementById('btn-modal-wa-charge');
-    if (btnWa) {
-        const hasDebt = athlete.debt_amount > 0 || (athlete.payment_status !== 'PAGADO' && athlete.payment_status !== 'BECADO' && athlete.fee_type !== 'BECA_COMPLETA');
-        btnWa.style.display = hasDebt ? 'inline-flex' : 'none';
-    }
-
-    renderModalRuts(athlete);
-
-    // Cargar historial de pagos
+async function loadAthleteMovementsHistory(athleteId) {
     const tbody = document.getElementById('modal-ath-payments-tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:15px; color:var(--text-muted);">Cargando historial...</td></tr>`;
 

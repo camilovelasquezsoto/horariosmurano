@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
     
     <!-- Estilos Modularizados -->
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=2.5">
     <!-- SheetJS para procesamiento ultrarrápido y seguro de cartolas Excel en el navegador -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -643,7 +643,7 @@
     </div>
 
     <!-- MODAL: FICHA / DETALLE DEL ALUMNO -->
-    <div id="f-athlete-modal" class="f-modal-overlay hidden">
+    <div id="f-athlete-modal" class="f-modal-overlay hidden" style="z-index: 10010;" onclick="if(event.target === this) closeAthleteModal()">
         <div class="f-modal">
             <div class="f-modal-header">
                 <h3 id="modal-ath-name">Ficha del Alumno</h3>
@@ -669,7 +669,7 @@
                 </div>
 
                 <!-- Configuración de Ficha, Arancel y Beca -->
-                <details style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:18px;">
+                <details open style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin-bottom:18px;">
                     <summary style="cursor:pointer; color:var(--accent-light); font-size:0.85rem; font-weight:700;">⚙️ Editar Ficha, Categoría, Agrupación y Beca</summary>
                     <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div>
@@ -1286,6 +1286,6 @@
 
 <!-- Lógica Modularizada -->
 <script>document.getElementById('current-year').textContent = new Date().getFullYear();</script>
-<script src="script.js"></script>
+<script src="script.js?v=2.5"></script>
 </body>
 </html>
