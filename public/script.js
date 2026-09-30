@@ -1028,22 +1028,33 @@ async function loadFinanceData() {
         // 3. Cargar Movimientos Pendientes de Asignar
         const pendRes = await fetch(`${API_BASE_URL}/finance/movements?period=${currentFinancePeriod}&status=PENDIENTE`);
         allFinancePendingMovements = await pendRes.json();
+
+        // Contar solo los que aún no están asignados o están por definir
+        const unassignedPending = allFinancePendingMovements.filter(m => !m.athlete_id || m.category_concept === 'POR_DEFINIR' || m.status === 'PENDIENTE');
+        const badgePend = document.getElementById('f-pending-badge');
+        if (badgePend) {
+            badgePend.textContent = unassignedPending.length;
+            if (unassignedPending.length > 0) badgePend.classList.remove('hidden');
+            else badgePend.classList.add('hidden');
+        }
+
         filterPendingTable();
 
         // 4. Cargar Pagos Extras y Otros Ingresos
         const extRes = await fetch(`${API_BASE_URL}/finance/movements?period=${currentFinancePeriod}&only_extras=true`);
         allFinanceExtrasMovements = await extRes.json();
 
+        // Solo los pagos que requieren revisión (sin alumno, por definir o en estado pendiente)
+        const unreviewedExtras = allFinanceExtrasMovements.filter(m => !m.athlete_id || m.category_concept === 'POR_DEFINIR' || m.status === 'PENDIENTE');
         const badgeExt = document.getElementById('f-extras-badge');
         if (badgeExt) {
-            badgeExt.textContent = allFinanceExtrasMovements.length;
-            if (allFinanceExtrasMovements.length > 0) badgeExt.classList.remove('hidden');
+            badgeExt.textContent = unreviewedExtras.length;
+            if (unreviewedExtras.length > 0) badgeExt.classList.remove('hidden');
             else badgeExt.classList.add('hidden');
         }
 
-        const totalExtrasMonto = allFinanceExtrasMovements.reduce((sum, m) => sum + (parseFloat(m.amount) || 0), 0);
         const badgeTotal = document.getElementById('f-extras-badge-total');
-        if (badgeTotal) badgeTotal.textContent = `${formatCLP(totalExtrasMonto)} en ${allFinanceExtrasMovements.length} pagos extras`;
+        if (badgeTotal) badgeTotal.textContent = `${unreviewedExtras.length} por revisar`;
 
         filterExtrasTable();
 
@@ -1055,10 +1066,24 @@ async function loadFinanceData() {
 
 function cleanAgrupacionStr(agrup) {
     if (!agrup) return '';
-    const parts = agrup.split('/').map(s => s.trim());
+    const parts = agrup.split(/[\/,]/).map(s => s.trim());
     const cleanParts = parts.filter(p => !p.match(/^PF\b/i) && !p.match(/\bPF\b/i) && p.length > 0);
     const unique = Array.from(new Set(cleanParts));
     return unique.join(' / ') || agrup;
+}
+
+function extractIndividualAgrupaciones(athletes) {
+    const set = new Set();
+    athletes.forEach(a => {
+        if (!a.agrupacion) return;
+        const parts = a.agrupacion.split(/[\/,]/).map(s => s.trim());
+        parts.forEach(p => {
+            if (p && !p.match(/^PF\b/i) && !p.match(/\bPF\b/i) && p.length > 1) {
+                set.add(p);
+            }
+        });
+    });
+    return Array.from(set).sort();
 }
 
 function populateCategoryFilter(athletes) {
@@ -1068,7 +1093,7 @@ function populateCategoryFilter(athletes) {
     const modalAgrup = document.getElementById('modal-edit-agrupacion');
 
     const cats = [...new Set(athletes.map(a => a.category).filter(Boolean))].sort();
-    const agrups = [...new Set(athletes.map(a => cleanAgrupacionStr(a.agrupacion)).filter(Boolean))].sort();
+    const agrups = extractIndividualAgrupaciones(athletes);
 
     if (selCat) {
         const currentVal = selCat.value;
@@ -1203,8 +1228,12 @@ function filterAthletesTable() {
         // Filtro Categoría (Edad)
         if (cat !== 'TODAS' && a.category !== cat) return false;
 
-        // Filtro Agrupación (Equipos Bayes)
-        if (agrupacion !== 'TODAS' && a.agrupacion !== agrupacion) return false;
+        // Filtro Agrupación (Equipos Bayes - admite separación limpia de agrupaciones dobles)
+        if (agrupacion !== 'TODAS') {
+            if (!a.agrupacion) return false;
+            const parts = a.agrupacion.split(/[\/,]/).map(s => s.trim().toUpperCase());
+            if (!parts.includes(agrupacion.trim().toUpperCase())) return false;
+        }
 
         // Filtro Inactivos / Retirados vs Activos
         const isAthInactive = a.status === 'INACTIVO' || a.status === 'RETIRADO';
@@ -1786,7 +1815,7 @@ function renderCategoriesTable(categories) {
     if (!tbody) return;
 
     if (!categories || categories.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">Sin datos de agrupaciones.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">Sin datos de agrupaciones.</td></tr>`;
         return;
     }
 
@@ -1816,9 +1845,416 @@ function renderCategoriesTable(categories) {
                         <div class="cat-progress-fill" style="width:${pct}%; background:${barColor};"></div>
                     </div>
                 </td>
+                <td style="text-align:right; white-space:nowrap;">
+                    <button class="btn-action-sm" onclick="openAgrupacionDetailModal('${escapeHtml(name)}')" style="color:var(--accent-light); font-weight:700;">
+                        👁️ Ver Alumnos
+                    </button>
+                </td>
             </tr>
         `;
     }).join('');
+}
+
+// ── MODAL: DETALLE DE ALUMNOS Y DEUDORES POR AGRUPACIÓN ──
+
+let currentAgrupDetailName = '';
+let currentAgrupDetailFilter = 'TODOS';
+let currentAgrupDetailAthletes = [];
+
+function openAgrupacionDetailModal(agrupName) {
+    currentAgrupDetailName = agrupName;
+    currentAgrupDetailFilter = 'TODOS';
+
+    const titleEl = document.getElementById('agrup-detail-title');
+    if (titleEl) titleEl.textContent = `👥 ${agrupName}`;
+
+    const subtitleEl = document.getElementById('agrup-detail-subtitle');
+    if (subtitleEl) subtitleEl.textContent = `Nómina de deportistas y control de aranceles para "${agrupName}"`;
+
+    const searchInp = document.getElementById('agrup-detail-search');
+    if (searchInp) searchInp.value = '';
+
+    document.querySelectorAll('#f-agrupacion-detail-modal .f-status-pills .f-pill').forEach(p => {
+        if (p.id === 'btn-agrup-filter-todos') p.classList.add('active');
+        else p.classList.remove('active');
+    });
+
+    // Filtrar deportistas que pertenezcan a esta agrupación o categoría
+    currentAgrupDetailAthletes = allFinanceAthletes.filter(a => {
+        if (a.status === 'INACTIVO' || a.status === 'RETIRADO') return false;
+        if (categoriesViewMode === 'category') {
+            return (a.category || '').trim().toUpperCase() === agrupName.trim().toUpperCase();
+        }
+        if (!a.agrupacion) return agrupName === 'Sin Agrupación';
+        const parts = a.agrupacion.split(/[\/,]/).map(s => s.trim().toUpperCase());
+        return parts.includes(agrupName.trim().toUpperCase());
+    });
+
+    // Calcular estadísticas
+    const total = currentAgrupDetailAthletes.length;
+    let alDia = 0;
+    let deudores = 0;
+    let deudaTotal = 0;
+
+    currentAgrupDetailAthletes.forEach(a => {
+        const debt = parseFloat(a.debt_amount) || 0;
+        const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : 'AMARILLO');
+        if (debt > 0 || sem === 'AMARILLO' || sem === 'NARANJA' || sem === 'ROJO') {
+            deudores++;
+            deudaTotal += debt;
+        } else {
+            alDia++;
+        }
+    });
+
+    const elTotal = document.getElementById('agrup-kpi-total');
+    if (elTotal) elTotal.textContent = total;
+    const elAlDia = document.getElementById('agrup-kpi-aldia');
+    if (elAlDia) elAlDia.textContent = alDia;
+    const elDeudores = document.getElementById('agrup-kpi-deudores');
+    if (elDeudores) elDeudores.textContent = deudores;
+    const elDeudaTotal = document.getElementById('agrup-kpi-deuda-monto');
+    if (elDeudaTotal) elDeudaTotal.textContent = formatCLP(deudaTotal);
+
+    renderAgrupacionDetailRows();
+    document.getElementById('f-agrupacion-detail-modal')?.classList.remove('hidden');
+}
+
+function setAgrupDetailFilter(filter, btn) {
+    currentAgrupDetailFilter = filter;
+    document.querySelectorAll('#f-agrupacion-detail-modal .f-status-pills .f-pill').forEach(p => p.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderAgrupacionDetailRows();
+}
+
+function filterAgrupacionDetailTable() {
+    renderAgrupacionDetailRows();
+}
+
+function renderAgrupacionDetailRows() {
+    const tbody = document.getElementById('agrup-detail-tbody');
+    if (!tbody) return;
+
+    const query = (document.getElementById('agrup-detail-search')?.value || '').trim().toLowerCase();
+
+    const list = currentAgrupDetailAthletes.filter(a => {
+        const debt = parseFloat(a.debt_amount) || 0;
+        const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : 'AMARILLO');
+        const hasDebt = (debt > 0) || (sem === 'AMARILLO' || sem === 'NARANJA' || sem === 'ROJO');
+
+        if (currentAgrupDetailFilter === 'DEUDORES' && !hasDebt) return false;
+        if (currentAgrupDetailFilter === 'AL_DIA' && hasDebt) return false;
+
+        if (query) {
+            const name = (a.full_name || `${a.first_name || ''} ${a.last_name || ''}`).toLowerCase();
+            const rut = (a.rut || '').toLowerCase();
+            if (!name.includes(query) && !rut.includes(query)) return false;
+        }
+        return true;
+    });
+
+    if (list.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-muted);">No se encontraron alumnos con los filtros seleccionados.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = list.map(a => {
+        const debt = parseFloat(a.debt_amount) || 0;
+        const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : 'AMARILLO');
+        const isAlDia = debt <= 0 && (sem === 'AL_DIA' || a.payment_status === 'PAGADO');
+        const statusBadge = isAlDia 
+            ? `<span style="background:rgba(0,230,118,0.15); color:var(--success); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🟢 Al Día</span>`
+            : `<span style="background:rgba(244,67,54,0.15); color:var(--danger); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🔴 Debe ${a.debt_months || 1} ${a.debt_months === 1 ? 'mes' : 'meses'}</span>`;
+
+        return `
+            <tr>
+                <td>
+                    <strong style="color:var(--text); font-size:0.88rem; display:block;">${escapeHtml(a.full_name || `${a.first_name} ${a.last_name}`)}</strong>
+                    <span class="cat-pill" style="font-size:0.7rem;">${escapeHtml(a.category || '-')}</span>
+                </td>
+                <td><code style="color:var(--accent-light); font-size:0.8rem;">${formatRut(a.rut)}</code></td>
+                <td>${formatCLP(a.monthly_fee)}</td>
+                <td style="color:var(--success); font-weight:700;">${formatCLP(a.paid_mensualidad || 0)}</td>
+                <td style="color:${debt > 0 ? 'var(--danger)' : 'var(--text-muted)'}; font-weight:700;">${formatCLP(debt)}</td>
+                <td>${statusBadge}</td>
+                <td style="text-align:right; white-space:nowrap;">
+                    ${!isAlDia ? `<button class="btn-action-sm" onclick="openWhatsAppModal(${a.id})" style="background:#25D366; color:#000; font-weight:700; border:none; margin-right:4px;" title="Cobrar por WhatsApp">💬 Cobrar</button>` : ''}
+                    <button class="btn-action-sm" onclick="viewAthleteSheet(${a.id})" title="Ver ficha del alumno">👁️ Ficha</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function closeAgrupacionDetailModal() {
+    document.getElementById('f-agrupacion-detail-modal')?.classList.add('hidden');
+}
+
+function exportAgrupacionDetailCSV() {
+    if (!currentAgrupDetailAthletes || currentAgrupDetailAthletes.length === 0) {
+        return toast('No hay alumnos para exportar');
+    }
+
+    let csv = 'Alumno,RUT,Categoria,Agrupacion,Arancel,Pagado,Deuda,Meses Deuda,Telefono Alumno,Telefono Apoderado\n';
+    currentAgrupDetailAthletes.forEach(a => {
+        csv += `"${a.full_name || `${a.first_name} ${a.last_name}`}","${formatRut(a.rut)}","${a.category || ''}","${a.agrupacion || ''}",${a.monthly_fee || 0},${a.paid_mensualidad || 0},${a.debt_amount || 0},${a.debt_months || 0},"${a.phone || ''}","${a.guardian_phone || ''}"\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `agrupacion_${currentAgrupDetailName.replace(/[^a-zA-Z0-9]/g, '_')}_${currentFinancePeriod}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast('📥 Planilla de la agrupación descargada');
+}
+
+// ── REGISTRO RÁPIDO DE MENSUALIDAD Y SELECTOR DE HERMANOS ──
+
+let currentSiblingMovement = null;
+let currentSiblingAthletes = [];
+
+async function quickRegisterMensualidad(movementId) {
+    const m = allFinanceExtrasMovements.find(x => x.id === movementId) || 
+              allFinancePendingMovements.find(x => x.id === movementId);
+    if (!m) return toast('Movimiento no encontrado');
+
+    const cleanRut = (m.payer_rut || '').replace(/[^0-9Kk]/g, '').toUpperCase();
+
+    // 1. Si no hay RUT pero sí tiene un athlete_id asignado previamente:
+    if (!cleanRut && m.athlete_id) {
+        return executeAssignMensualidad(m.id, m.athlete_id, m.period || currentFinancePeriod);
+    }
+
+    // 2. Si hay RUT, consultar cuántos alumnos tiene asociados en la base de datos:
+    if (cleanRut) {
+        try {
+            const res = await fetch(`${API_BASE_URL}/finance/payer-ruts/lookup?rut=${cleanRut}`);
+            if (res.ok) {
+                const data = await res.json();
+                const matchedAthletes = data.athletes || [];
+
+                if (matchedAthletes.length === 1) {
+                    return executeAssignMensualidad(m.id, matchedAthletes[0].id, m.period || currentFinancePeriod, matchedAthletes[0].first_name);
+                } else if (matchedAthletes.length > 1) {
+                    return openSelectSiblingModal(m, matchedAthletes);
+                }
+            }
+        } catch (e) {
+            console.error('Error buscando RUT pagador:', e);
+        }
+    }
+
+    // 3. Si ya tenía athlete_id en el movimiento:
+    if (m.athlete_id) {
+        const ath = allFinanceAthletes.find(a => a.id === m.athlete_id);
+        return executeAssignMensualidad(m.id, m.athlete_id, m.period || currentFinancePeriod, ath?.first_name);
+    }
+
+    // 4. Si no tiene alumno ni match por RUT, abrir modal de asignación con mensualidad preseleccionada
+    await openEditMovementModal(m.id);
+    const sel = document.getElementById('edit-mov-concept');
+    if (sel) sel.value = 'MENSUALIDAD';
+}
+
+async function executeAssignMensualidad(movementId, athleteId, period, athleteName) {
+    try {
+        const res = await fetch(`${API_BASE_URL}/finance/movements/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                movement_id: movementId,
+                athlete_id: athleteId,
+                category_concept: 'MENSUALIDAD',
+                concept: 'MENSUALIDAD',
+                status: 'CONCILIADO',
+                period: period || currentFinancePeriod,
+                remember_rut: true
+            })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+            const name = athleteName || (allFinanceAthletes.find(a => a.id === athleteId)?.full_name || 'alumno');
+            toast(`✅ Mensualidad registrada exitosamente para ${name}`);
+            closeSelectSiblingModal();
+            loadFinanceData();
+        } else {
+            toast(data.error || 'Error al registrar mensualidad');
+        }
+    } catch (e) {
+        toast('Error de conexión al registrar mensualidad');
+    }
+}
+
+function openSelectSiblingModal(mov, athletes) {
+    currentSiblingMovement = mov;
+    currentSiblingAthletes = athletes;
+
+    const nameEl = document.getElementById('sibling-payer-name');
+    if (nameEl) nameEl.textContent = mov.payer_name || 'Desconocido';
+
+    const rutEl = document.getElementById('sibling-payer-rut');
+    if (rutEl) rutEl.textContent = formatRut(mov.payer_rut || '');
+
+    const amtEl = document.getElementById('sibling-payment-amount');
+    if (amtEl) amtEl.textContent = formatCLP(mov.amount);
+
+    const container = document.getElementById('sibling-cards-container');
+    if (container) {
+        container.innerHTML = athletes.map(a => {
+            const fee = parseFloat(a.monthly_fee) || 0;
+            const isMatchAmount = Math.abs(fee - parseFloat(mov.amount)) < 1;
+            return `
+                <div style="background:#181818; border:1px solid ${isMatchAmount ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:12px 14px; display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <strong style="color:var(--text); font-size:0.95rem; display:block;">${escapeHtml(a.first_name)} ${escapeHtml(a.last_name)}</strong>
+                        <div style="font-size:0.78rem; color:var(--text-muted);">
+                            ${escapeHtml(a.category || '')} • Arancel: <strong style="color:var(--accent-light);">${formatCLP(fee)}</strong>
+                            ${a.relationship ? ` • ${escapeHtml(a.relationship)}` : ''}
+                        </div>
+                        ${isMatchAmount ? `<span style="font-size:0.72rem; color:var(--accent); background:rgba(187,134,252,0.1); padding:2px 6px; border-radius:4px; font-weight:700;">🎯 Coincide con arancel</span>` : ''}
+                    </div>
+                    <button class="primary" onclick="executeAssignMensualidad(${mov.id}, ${a.id || a.athlete_id}, '${mov.period || currentFinancePeriod}', '${escapeHtml(a.first_name)}')" style="padding:6px 14px; font-size:0.82rem; white-space:nowrap;">
+                        ✓ Es de ${escapeHtml(a.first_name)}
+                    </button>
+                </div>
+            `;
+        }).join('');
+    }
+
+    document.getElementById('f-select-sibling-modal')?.classList.remove('hidden');
+}
+
+function closeSelectSiblingModal() {
+    document.getElementById('f-select-sibling-modal')?.classList.add('hidden');
+    currentSiblingMovement = null;
+    currentSiblingAthletes = [];
+}
+
+function openSplitFromSibling() {
+    if (currentSiblingMovement) {
+        const movId = currentSiblingMovement.id;
+        closeSelectSiblingModal();
+        openSplitMovementModal(movId);
+    }
+}
+
+// ── BUSCADOR DE RUT PAGADOR ──
+
+let payerLookupDebounceTimer = null;
+
+function openPayerRutLookupModal() {
+    const input = document.getElementById('payer-lookup-input');
+    if (input) input.value = '';
+    document.getElementById('payer-lookup-loading')?.classList.add('hidden');
+    document.getElementById('payer-lookup-empty')?.classList.add('hidden');
+    document.getElementById('payer-lookup-results')?.classList.add('hidden');
+    document.getElementById('f-payer-lookup-modal')?.classList.remove('hidden');
+    if (input) setTimeout(() => input.focus(), 100);
+}
+
+function closePayerRutLookupModal() {
+    document.getElementById('f-payer-lookup-modal')?.classList.add('hidden');
+}
+
+function debouncePayerLookup(query) {
+    clearTimeout(payerLookupDebounceTimer);
+    payerLookupDebounceTimer = setTimeout(() => {
+        executePayerLookup(query);
+    }, 350);
+}
+
+async function executePayerLookup(query) {
+    const q = (query || '').trim();
+    if (!q) {
+        document.getElementById('payer-lookup-loading')?.classList.add('hidden');
+        document.getElementById('payer-lookup-empty')?.classList.add('hidden');
+        document.getElementById('payer-lookup-results')?.classList.add('hidden');
+        return;
+    }
+
+    const cleanRut = q.replace(/[^0-9Kk]/g, '').toUpperCase();
+    document.getElementById('payer-lookup-loading')?.classList.remove('hidden');
+    document.getElementById('payer-lookup-empty')?.classList.add('hidden');
+    document.getElementById('payer-lookup-results')?.classList.add('hidden');
+
+    try {
+        const url = cleanRut.length >= 3 
+            ? `${API_BASE_URL}/finance/payer-ruts/lookup?rut=${cleanRut}`
+            : `${API_BASE_URL}/finance/payer-ruts/lookup?name=${encodeURIComponent(q)}`;
+
+        const res = await fetch(url);
+        const data = await res.json();
+        document.getElementById('payer-lookup-loading')?.classList.add('hidden');
+
+        if (!res.ok || (!data.movements?.length && !data.athletes?.length && !data.payers?.length)) {
+            document.getElementById('payer-lookup-empty')?.classList.remove('hidden');
+            return;
+        }
+
+        renderPayerLookupData(data);
+    } catch (e) {
+        document.getElementById('payer-lookup-loading')?.classList.add('hidden');
+        document.getElementById('payer-lookup-empty')?.classList.remove('hidden');
+    }
+}
+
+function renderPayerLookupData(data) {
+    document.getElementById('payer-lookup-results')?.classList.remove('hidden');
+
+    const rutDisplay = data.formatted_rut || data.target_rut || 'Sin RUT';
+    const payerNames = [...new Set(data.payers.map(p => p.payer_name).filter(Boolean))].join(' / ') || data.movements[0]?.payer_name || 'Nombre no registrado';
+
+    const rutEl = document.getElementById('pl-rut-display');
+    if (rutEl) rutEl.textContent = rutDisplay;
+    const namesEl = document.getElementById('pl-names-display');
+    if (namesEl) namesEl.textContent = payerNames;
+    const statCountEl = document.getElementById('pl-stat-count');
+    if (statCountEl) statCountEl.textContent = data.stats.total_transfers;
+    const statUsualEl = document.getElementById('pl-stat-usual-amount');
+    if (statUsualEl) statUsualEl.textContent = formatCLP(data.stats.usual_amount);
+    const statTotalEl = document.getElementById('pl-stat-total-paid');
+    if (statTotalEl) statTotalEl.textContent = formatCLP(data.stats.total_paid);
+
+    // Alumnos vinculados
+    const athList = document.getElementById('pl-athletes-list');
+    if (athList) {
+        if (!data.athletes || data.athletes.length === 0) {
+            athList.innerHTML = `<span style="color:var(--text-muted); font-size:0.8rem; font-style:italic;">No tiene alumnos registrados directamente en su ficha.</span>`;
+        } else {
+            athList.innerHTML = data.athletes.map(a => `
+                <div style="background:#1e1e1e; border:1px solid var(--border); border-radius:8px; padding:6px 12px; display:inline-flex; align-items:center; gap:8px;">
+                    <div>
+                        <strong style="color:var(--text); font-size:0.85rem; display:block;">${escapeHtml(a.first_name)} ${escapeHtml(a.last_name)}</strong>
+                        <span style="font-size:0.75rem; color:var(--text-dim);">${escapeHtml(a.category || '')} • Arancel: ${formatCLP(a.monthly_fee)}</span>
+                    </div>
+                    <button class="btn-action-sm" onclick="viewAthleteSheet(${a.id})" style="padding:2px 8px; font-size:0.72rem;">👁️ Ficha</button>
+                </div>
+            `).join('');
+        }
+    }
+
+    // Historial de movimientos
+    const movTbody = document.getElementById('pl-movements-tbody');
+    if (movTbody) {
+        if (!data.movements || data.movements.length === 0) {
+            movTbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:var(--text-muted);">Sin historial de transferencias registradas.</td></tr>`;
+        } else {
+            movTbody.innerHTML = data.movements.map(m => `
+                <tr>
+                    <td style="white-space:nowrap;">${m.date || 'S/F'}</td>
+                    <td><span class="cat-pill" style="font-size:0.7rem;">${m.period || '-'}</span></td>
+                    <td style="color:var(--success); font-weight:700;">${formatCLP(m.amount)}</td>
+                    <td>${getConceptBadgeHtml(m.category_concept)}</td>
+                    <td>${m.athlete_id ? `<strong style="color:var(--text); font-size:0.8rem;">${escapeHtml(m.first_name || '')} ${escapeHtml(m.last_name || '')}</strong>` : `<span style="color:var(--text-muted); font-size:0.75rem; font-style:italic;">General</span>`}</td>
+                    <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.75rem; color:var(--text-dim);">${escapeHtml(m.notes || '-')}</td>
+                </tr>
+            `).join('');
+        }
+    }
 }
 
 // ── GESTIÓN DE PAGOS EXTRAS Y OTROS INGRESOS ──
@@ -2066,6 +2502,7 @@ function renderExtrasTable(movements) {
                     ${m.notes || '-'}
                 </td>
                 <td style="text-align:right; white-space:nowrap;">
+                    <button class="btn-action-sm" onclick="quickRegisterMensualidad(${m.id})" title="Registrar directamente como mensualidad del alumno" style="background:rgba(0,230,118,0.15); color:var(--success); border-color:var(--success); font-weight:700; margin-right:4px;">💳 Mensualidad</button>
                     <button class="btn-action-sm" onclick="openEditMovementModal(${m.id})" title="Editar concepto o asignar alumno">✏️ Clasificar</button>
                     <button class="btn-action-sm" onclick="openSplitMovementModal(${m.id})" title="Dividir en partes para hermanos o varios conceptos" style="margin-left:4px;">✂️ Dividir</button>
                 </td>

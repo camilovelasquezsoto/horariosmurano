@@ -71,6 +71,7 @@ router.delete('/finance/athletes/:id', financeController.deleteAthlete);
 
 router.post('/finance/athletes/ruts', financeController.addPayerRut);
 router.delete('/finance/athletes/ruts/:id', financeController.removePayerRut);
+router.get('/finance/payer-ruts/lookup', financeController.lookupPayerRut);
 
 router.post('/finance/cartola/upload', upload.single('cartola'), financeController.processCartola);
 router.post('/finance/cartola/process', financeController.processCartola);

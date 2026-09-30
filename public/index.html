@@ -189,7 +189,7 @@
         <div class="finance-nav-tabs">
             <button class="f-tab-btn active" id="f-tab-btn-athletes" onclick="switchFinanceTab('athletes')">📋 Nómina y Cuotas</button>
             <button class="f-tab-btn" id="f-tab-btn-extras" onclick="switchFinanceTab('extras')">
-                📦 Pagos Extras <span class="tab-badge" id="f-extras-badge">0</span>
+                📦 Pagos <span class="tab-badge" id="f-extras-badge">0</span>
             </button>
             <button class="f-tab-btn" id="f-tab-btn-pending" onclick="switchFinanceTab('pending')">
                 ⚡ Por Asignar <span class="tab-badge" id="f-pending-badge">0</span>
@@ -301,19 +301,20 @@
             </div>
         </div>
 
-        <!-- TAB: PAGOS EXTRAS Y OTROS INGRESOS -->
+        <!-- TAB: PAGOS Y REGISTRO DE TRANSFERENCIAS -->
         <div id="f-tab-extras" class="f-tab-content hidden">
             <div style="background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
                 <div>
-                    <h3 style="font-size:1.1rem; color:var(--text); margin-bottom:4px;">📦 Pagos Extras, Matrículas y Otros Ingresos</h3>
+                    <h3 style="font-size:1.1rem; color:var(--text); margin-bottom:4px;">📦 Gestión de Pagos y Transferencias</h3>
                     <p style="font-size:0.85rem; color:var(--text-muted); margin:0;">
-                        Ingresos distintos a la mensualidad regular (matrículas, uniformes, campeonatos, clínicas o pagos conjuntos). Puedes clasificar el concepto, asignar notas o dividir el pago entre varios alumnos.
+                        Revisa y concilia pagos bancarios. Puedes registrar la mensualidad de un alumno con un clic, asignar conceptos o dividir pagos.
                     </p>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px;">
                     <span id="f-extras-badge-total" style="background:rgba(187,134,252,0.15); color:#bb86fc; border:1px solid rgba(187,134,252,0.3); padding:6px 12px; border-radius:8px; font-weight:700; font-size:0.85rem;">
-                        $0 en extras
+                        0 por revisar
                     </span>
+                    <button class="btn-action-sm" onclick="openPayerRutLookupModal()" style="color:var(--accent-light); font-weight:700; border-color:var(--accent-light);">🔍 Buscar RUT Pagador</button>
                     <button class="btn-action-sm" onclick="exportExtrasCSV()">📑 Exportar CSV</button>
                 </div>
             </div>
@@ -583,10 +584,11 @@
                             <th>Arancel Esperado</th>
                             <th>Recaudado Total</th>
                             <th>Progreso de Cobranza</th>
+                            <th style="text-align:right;">Acciones</th>
                         </tr>
                     </thead>
                     <tbody id="f-categories-tbody">
-                        <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-muted);">Cargando reporte de agrupaciones...</td></tr>
+                        <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">Cargando reporte de agrupaciones...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -1388,6 +1390,202 @@
         </div>
     </div>
 
+    <!-- MODAL: DETALLE DE AGRUPACIÓN / DEUDORES POR EQUIPO -->
+    <div id="f-agrupacion-detail-modal" class="f-modal-overlay hidden" onclick="if(event.target === this) closeAgrupacionDetailModal()">
+        <div class="f-modal" style="max-width:850px; width:95%; max-height:90vh; display:flex; flex-direction:column;">
+            <div class="f-modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h3 id="agrup-detail-title" style="margin:0; font-size:1.15rem; color:var(--text);">👥 Detalle de Agrupación</h3>
+                    <span id="agrup-detail-subtitle" style="font-size:0.8rem; color:var(--text-muted);">Listado de deportistas y estado de cuotas</span>
+                </div>
+                <button class="f-modal-close" onclick="closeAgrupacionDetailModal()">✕</button>
+            </div>
+            <div class="f-modal-body" style="overflow-y:auto; flex:1; padding:16px 20px;">
+                <!-- KPIs Agrupación -->
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:14px;">
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:10px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Total Alumnos</span>
+                        <strong id="agrup-kpi-total" style="font-size:1.2rem; color:var(--text);">0</strong>
+                    </div>
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:10px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Al Día</span>
+                        <strong id="agrup-kpi-aldia" style="font-size:1.2rem; color:var(--success);">0</strong>
+                    </div>
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:10px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Con Deuda</span>
+                        <strong id="agrup-kpi-deudores" style="font-size:1.2rem; color:var(--danger);">0</strong>
+                    </div>
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:10px; text-align:center;">
+                        <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Deuda Total</span>
+                        <strong id="agrup-kpi-deuda-monto" style="font-size:1.2rem; color:var(--danger);">$0</strong>
+                    </div>
+                </div>
+
+                <!-- Filtros del Modal -->
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+                    <input type="text" id="agrup-detail-search" class="f-search-input" placeholder="🔍 Buscar alumno en este grupo..." oninput="filterAgrupacionDetailTable()" style="max-width:260px;">
+                    <div class="f-status-pills">
+                        <button class="f-pill active" id="btn-agrup-filter-todos" onclick="setAgrupDetailFilter('TODOS', this)">Todos</button>
+                        <button class="f-pill" id="btn-agrup-filter-deudores" onclick="setAgrupDetailFilter('DEUDORES', this)" style="border-color:var(--danger); color:var(--danger);">🔴 Deudores</button>
+                        <button class="f-pill" id="btn-agrup-filter-aldia" onclick="setAgrupDetailFilter('AL_DIA', this)" style="border-color:var(--success); color:var(--success);">🟢 Al Día</button>
+                    </div>
+                </div>
+
+                <!-- Tabla de Alumnos en la Agrupación -->
+                <div class="f-table-container" style="max-height:360px; overflow-y:auto;">
+                    <table class="f-table" style="font-size:0.83rem;">
+                        <thead>
+                            <tr>
+                                <th>Alumno</th>
+                                <th>RUT</th>
+                                <th>Arancel</th>
+                                <th>Pagado</th>
+                                <th>Deuda</th>
+                                <th>Estado</th>
+                                <th style="text-align:right;">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody id="agrup-detail-tbody">
+                            <!-- Filas dinámicas -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="f-modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+                <button class="btn-action-sm" onclick="exportAgrupacionDetailCSV()">📑 Exportar Lista CSV</button>
+                <button class="primary" onclick="closeAgrupacionDetailModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: SELECCIONAR ALUMNO PARA MENSUALIDAD (CUANDO EL RUT TIENE MÚLTIPLES HIJOS) -->
+    <div id="f-select-sibling-modal" class="f-modal-overlay hidden" onclick="if(event.target === this) closeSelectSiblingModal()">
+        <div class="f-modal" style="max-width:540px; width:95%;">
+            <div class="f-modal-header">
+                <div>
+                    <h3 style="margin:0; font-size:1.15rem; color:var(--text);">💳 Registrar Mensualidad</h3>
+                    <span style="font-size:0.8rem; color:var(--text-muted);">Este RUT está asociado a más de un alumno. Selecciona a quién corresponde este pago:</span>
+                </div>
+                <button class="f-modal-close" onclick="closeSelectSiblingModal()">✕</button>
+            </div>
+            <div class="f-modal-body">
+                <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:12px 16px; margin-bottom:16px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); display:block;">PAGADOR / RUT</span>
+                            <strong id="sibling-payer-name" style="font-size:0.95rem; color:var(--text);">-</strong>
+                            <div id="sibling-payer-rut" style="font-size:0.78rem; color:var(--text-dim);">-</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <span style="font-size:0.75rem; color:var(--text-muted); display:block;">MONTO TRANSFERIDO</span>
+                            <strong id="sibling-payment-amount" style="font-size:1.3rem; color:var(--accent);">$0</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="font-size:0.82rem; font-weight:700; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase;">
+                    Selecciona al deportista beneficiario:
+                </div>
+                <div id="sibling-cards-container" style="display:flex; flex-direction:column; gap:10px; margin-bottom:14px;">
+                    <!-- Se renderizan los deportistas vinculados con sus botones -->
+                </div>
+            </div>
+            <div class="f-modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+                <button class="btn-action-sm" onclick="openSplitFromSibling()">✂️ Dividir Pago (Ambos Hijos)</button>
+                <button class="btn-action-sm" onclick="closeSelectSiblingModal()">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: BUSCADOR DE RUT PAGADOR -->
+    <div id="f-payer-lookup-modal" class="f-modal-overlay hidden" onclick="if(event.target === this) closePayerRutLookupModal()">
+        <div class="f-modal" style="max-width:760px; width:95%; max-height:90vh; display:flex; flex-direction:column;">
+            <div class="f-modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <h3 style="margin:0; font-size:1.15rem; color:var(--text);">🔍 Buscador de RUT Pagador</h3>
+                    <span style="font-size:0.8rem; color:var(--text-muted);">Consulta quién transfiere con este RUT, por quién paga habitualmente y su historial</span>
+                </div>
+                <button class="f-modal-close" onclick="closePayerRutLookupModal()">✕</button>
+            </div>
+            <div class="f-modal-body" style="overflow-y:auto; flex:1; padding:16px 20px;">
+                <div style="margin-bottom:16px; position:relative;">
+                    <input type="text" id="payer-lookup-input" class="f-search-input" style="width:100%; box-sizing:border-box; font-size:0.95rem; padding:10px 14px;" placeholder="Ingresa RUT (ej. 12.345.678-9) o nombre del pagador..." oninput="debouncePayerLookup(this.value)">
+                </div>
+
+                <div id="payer-lookup-loading" class="hidden" style="text-align:center; padding:20px;">
+                    <div class="spinner" style="margin:0 auto 10px; width:28px; height:28px; border:3px solid rgba(255,255,255,0.1); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite;"></div>
+                    <span style="font-size:0.85rem; color:var(--text-muted);">Buscando información de transferencias...</span>
+                </div>
+
+                <div id="payer-lookup-empty" class="hidden" style="text-align:center; padding:30px; color:var(--text-muted);">
+                    No se encontraron pagos ni registros con ese RUT o nombre.
+                </div>
+
+                <div id="payer-lookup-results" class="hidden">
+                    <!-- Tarjeta de Perfil del Pagador -->
+                    <div style="background:#141414; border:1px solid var(--border); border-radius:10px; padding:14px; margin-bottom:14px;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <span style="font-size:0.75rem; text-transform:uppercase; color:var(--text-muted); display:block;">RUT PAGADOR</span>
+                                <strong id="pl-rut-display" style="font-size:1.1rem; color:var(--accent);">-</strong>
+                                <div id="pl-names-display" style="font-size:0.85rem; color:var(--text); margin-top:2px;">-</div>
+                            </div>
+                            <div style="display:flex; gap:14px; text-align:right;">
+                                <div>
+                                    <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Transferencias</span>
+                                    <strong id="pl-stat-count" style="font-size:1rem; color:var(--text);">0</strong>
+                                </div>
+                                <div>
+                                    <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Monto Habitual</span>
+                                    <strong id="pl-stat-usual-amount" style="font-size:1rem; color:var(--success);">$0</strong>
+                                </div>
+                                <div>
+                                    <span style="font-size:0.72rem; color:var(--text-muted); text-transform:uppercase; display:block;">Total Transferido</span>
+                                    <strong id="pl-stat-total-paid" style="font-size:1rem; color:var(--accent-light);">$0</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Alumnos vinculados -->
+                    <div style="margin-bottom:14px;">
+                        <span style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; display:block; margin-bottom:6px;">
+                            👶 Alumnos Asociados (Paga habitualmente por):
+                        </span>
+                        <div id="pl-athletes-list" style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <!-- Badges de alumnos -->
+                        </div>
+                    </div>
+
+                    <!-- Historial de Movimientos -->
+                    <div>
+                        <span style="font-size:0.8rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; display:block; margin-bottom:6px;">
+                            📑 Historial de Transferencias Bancarias:
+                        </span>
+                        <div class="f-table-container" style="max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+                            <table class="f-table" style="font-size:0.8rem;">
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Período</th>
+                                        <th>Monto</th>
+                                        <th>Concepto</th>
+                                        <th>Alumno Asignado</th>
+                                        <th>Detalle / Glosa</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pl-movements-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="f-modal-footer">
+                <button class="primary" onclick="closePayerRutLookupModal()">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <!-- PIE DE PÁGINA -->
@@ -1400,58 +1598,58 @@
         <a href="https://www.instagram.com/murano.pm?utm_source=ig_web_button_share_sheet&igsh=ZDNlZDc0MzIxNw==" target="_blank" rel="noopener" class="social-btn">
             <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
-            </svg>
-            Instagram
-        </a>
-        <!-- YouTube -->
-        <a href="https://www.youtube.com/@MuranoPuertoMontt" target="_blank" rel="noopener" class="social-btn">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-            </svg>
-            YouTube
-        </a>
-        <!-- Email -->
-        <a href="mailto:puertomonttmurano@gmail.com" class="social-btn">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
-            </svg>
-            Contacto
-        </a>
-    </div>
-    
-    <div class="footer-bottom">
-        <p>© <span id="current-year"></span> Todos los derechos reservados.</p>
-        <p style="opacity: 0.5;">Desarrollado para Murano Voley</p>
-    </div>
+        </svg>
+        Instagram
+    </a>
+    <!-- YouTube -->
+    <a href="https://www.youtube.com/@MuranoPuertoMontt" target="_blank" rel="noopener" class="social-btn">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+        </svg>
+        YouTube
+    </a>
+    <!-- Email -->
+    <a href="mailto:puertomonttmurano@gmail.com" class="social-btn">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+        </svg>
+        Contacto
+    </a>
+</div>
+
+<div class="footer-bottom">
+    <p>© <span id="current-year"></span> Todos los derechos reservados.</p>
+    <p style="opacity: 0.5;">Desarrollado para Murano Voley</p>
+</div>
 </footer>
 
 
 <!-- NAVEGACIÓN INFERIOR MÓVIL -->
 <nav class="mobile-bottom-nav" id="mobile-nav">
-    <button class="mob-nav-btn" id="mob-canchas" onclick="renderList('gym'); setMobileNav('mob-canchas')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M1 22V9L12 2l11 7v13h-7v-7h-4v7Z"/></svg>
-        <span>Canchas</span>
-    </button>
-    <button class="mob-nav-btn" id="mob-categorias" onclick="renderList('cat'); setMobileNav('mob-categorias')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
-        <span>Categorías</span>
-    </button>
-    <button class="mob-nav-btn" id="mob-profes" onclick="renderList('trainer'); setMobileNav('mob-profes')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
-        <span>Profes</span>
-    </button>
-    <button class="mob-nav-btn" id="mob-favs" onclick="renderFavorites(); setMobileNav('mob-favs')">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
-        <span>Favoritos</span>
-    </button>
-    <button class="mob-nav-btn" id="mob-finanzas" onclick="openFinanceModule(); setMobileNav('mob-finanzas')">
-        <span style="font-size:20px; line-height:22px;">💰</span>
-        <span>Pagos</span>
-    </button>
+<button class="mob-nav-btn" id="mob-canchas" onclick="renderList('gym'); setMobileNav('mob-canchas')">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M1 22V9L12 2l11 7v13h-7v-7h-4v7Z"/></svg>
+    <span>Canchas</span>
+</button>
+<button class="mob-nav-btn" id="mob-categorias" onclick="renderList('cat'); setMobileNav('mob-categorias')">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+    <span>Categorías</span>
+</button>
+<button class="mob-nav-btn" id="mob-profes" onclick="renderList('trainer'); setMobileNav('mob-profes')">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+    <span>Profes</span>
+</button>
+<button class="mob-nav-btn" id="mob-favs" onclick="renderFavorites(); setMobileNav('mob-favs')">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+    <span>Favoritos</span>
+</button>
+<button class="mob-nav-btn" id="mob-finanzas" onclick="openFinanceModule(); setMobileNav('mob-finanzas')">
+    <span style="font-size:20px; line-height:22px;">💰</span>
+    <span>Pagos</span>
+</button>
 </nav>
 
 <!-- Lógica Modularizada -->
 <script>document.getElementById('current-year').textContent = new Date().getFullYear();</script>
-<script src="script.js?v=2.8"></script>
+<script src="script.js?v=2.9"></script>
 </body>
 </html>

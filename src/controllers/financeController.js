@@ -400,6 +400,116 @@ exports.removePayerRut = async (req, res) => {
     }
 };
 
+// 6b. Buscar y consultar historial y vínculos de un RUT Pagador
+exports.lookupPayerRut = async (req, res) => {
+    try {
+        const queryStr = req.query.q || req.query.rut || '';
+        const cRut = cleanRut(queryStr);
+        const nameQuery = queryStr.trim().toLowerCase();
+
+        if (!cRut && nameQuery.length < 2) {
+            return res.json({ athletes: [], movements: [], payers: [] });
+        }
+
+        // 1. Buscar en athlete_payer_ruts y en bank_movements para encontrar RUTs y nombres coincidentes
+        const payersRes = await pool.query(`
+            SELECT DISTINCT 
+                COALESCE(apr.payer_rut, m.payer_rut) as rut,
+                COALESCE(NULLIF(apr.payer_name, ''), NULLIF(m.payer_name, ''), 'Desconocido') as payer_name
+            FROM bank_movements m
+            FULL OUTER JOIN athlete_payer_ruts apr ON m.payer_rut = apr.payer_rut
+            WHERE 
+                ($1 != '' AND (m.payer_rut LIKE $2 OR apr.payer_rut LIKE $2))
+                OR ($3 != '' AND (LOWER(m.payer_name) LIKE $4 OR LOWER(apr.payer_name) LIKE $4))
+            LIMIT 15
+        `, [
+            cRut, 
+            `%${cRut}%`, 
+            nameQuery, 
+            `%${nameQuery}%`
+        ]);
+
+        if (payersRes.rows.length === 0 && !cRut) {
+            return res.json({ payers: [], athletes: [], movements: [], stats: null });
+        }
+
+        const targetRut = cRut || (payersRes.rows[0]?.rut) || '';
+
+        // 2. Deportistas asociados a este RUT
+        const athRes = await pool.query(`
+            SELECT 
+                a.id, a.first_name, a.last_name, a.category, a.agrupacion, a.monthly_fee, a.status, a.phone, a.apoderado_phone,
+                apr.relationship, apr.payer_name
+            FROM athlete_payer_ruts apr
+            JOIN athletes a ON apr.athlete_id = a.id
+            WHERE apr.payer_rut = $1
+            ORDER BY a.last_name ASC
+        `, [targetRut]);
+
+        // 3. Movimientos bancarios realizados por este RUT
+        const movsRes = await pool.query(`
+            SELECT 
+                m.id, TO_CHAR(m.date, 'YYYY-MM-DD') as date, m.amount, m.period, m.category_concept, m.status, m.notes,
+                m.payer_name, m.bank_origin, m.account_origin,
+                a.id as athlete_id, a.first_name, a.last_name, a.category as athlete_category
+            FROM bank_movements m
+            LEFT JOIN athletes a ON m.athlete_id = a.id
+            WHERE m.payer_rut = $1
+            ORDER BY m.date DESC, m.id DESC
+        `, [targetRut]);
+
+        // 4. Calcular estadísticas del pagador
+        const movs = movsRes.rows;
+        const totalPaid = movs.reduce((sum, m) => sum + parseFloat(m.amount || 0), 0);
+        
+        // Frecuencia de montos y conceptos
+        const amtCounts = {};
+        const conceptCounts = {};
+        movs.forEach(m => {
+            const a = Math.round(parseFloat(m.amount));
+            amtCounts[a] = (amtCounts[a] || 0) + 1;
+            const c = m.category_concept || 'POR_DEFINIR';
+            conceptCounts[c] = (conceptCounts[c] || 0) + 1;
+        });
+
+        let usualAmount = 0;
+        let maxAmtCount = 0;
+        for (const [amt, cnt] of Object.entries(amtCounts)) {
+            if (cnt > maxAmtCount) {
+                maxAmtCount = cnt;
+                usualAmount = parseInt(amt, 10);
+            }
+        }
+
+        let usualConcept = 'MENSUALIDAD';
+        let maxConceptCount = 0;
+        for (const [c, cnt] of Object.entries(conceptCounts)) {
+            if (cnt > maxConceptCount) {
+                maxConceptCount = cnt;
+                usualConcept = c;
+            }
+        }
+
+        res.json({
+            target_rut: targetRut,
+            formatted_rut: formatRut(targetRut),
+            payers: payersRes.rows.map(p => ({ ...p, formatted_rut: formatRut(p.rut) })),
+            athletes: athRes.rows,
+            movements: movs.map(m => ({ ...m, formatted_rut: formatRut(targetRut) })),
+            stats: {
+                total_transfers: movs.length,
+                total_paid: totalPaid,
+                usual_amount: usualAmount,
+                usual_concept: usualConcept,
+                last_transfer: movs[0]?.date || null
+            }
+        });
+    } catch (err) {
+        console.error('Error al consultar RUT pagador:', err);
+        res.status(500).json({ error: 'Error al consultar RUT pagador', details: err.message });
+    }
+};
+
 // Helper para parsear XML de Scotiabank (typeDesc)
 function parseScotiabankXML(xmlString) {
     const regex = /<movimiento>(.*?)<\/movimiento>/gs;
@@ -656,31 +766,15 @@ exports.processCartola = async (req, res) => {
             if (matchedAthletes.length === 1) {
                 const ath = matchedAthletes[0];
                 athleteId = ath.athlete_id;
-                status = 'CONCILIADO';
+                status = 'PENDIENTE';
                 matchedCount++;
-
-                const fee = parseFloat(ath.monthly_fee) || 0;
-                if (categoryConcept === 'POR_DEFINIR' && isStrictFeeAmount && Math.abs(amt - fee) < 1) {
-                    categoryConcept = 'MENSUALIDAD';
-                }
             } else if (matchedAthletes.length > 1) {
-                const exactMatch = matchedAthletes.find(a => isStrictFeeAmount && Math.abs(parseFloat(a.monthly_fee) - amt) < 1);
-                if (exactMatch) {
-                    athleteId = exactMatch.athlete_id;
-                    status = 'CONCILIADO';
-                    matchedCount++;
-                    if (categoryConcept === 'POR_DEFINIR') {
-                        categoryConcept = 'MENSUALIDAD';
-                    }
-                    const noteAdd = `Mensualidad de ${exactMatch.first_name} ${exactMatch.last_name} (${exactMatch.category})`;
-                    movementNotes = movementNotes ? `${movementNotes} | ${noteAdd}` : noteAdd;
-                } else {
-                    athleteId = matchedAthletes[0].athlete_id;
-                    status = 'CONCILIADO';
-                    matchedCount++;
-                    const kidsNames = matchedAthletes.map(k => `${k.first_name} (${k.category} $${k.monthly_fee})`).join(' y ');
-                    movementNotes = movementNotes ? `${movementNotes} | Apoderado de: ${kidsNames}. Usa "Dividir Pago" si es pago conjunto.` : `Apoderado de: ${kidsNames}. Usa "Dividir Pago" si es pago conjunto.`;
-                }
+                // Múltiples deportistas vinculados al RUT: asignar el primer candidato pero marcar notas para definir con el botón
+                athleteId = matchedAthletes[0].athlete_id;
+                status = 'PENDIENTE';
+                matchedCount++;
+                const kidsNames = matchedAthletes.map(k => `${k.first_name} (${k.category} $${k.monthly_fee})`).join(' y ');
+                movementNotes = movementNotes ? `${movementNotes} | Apoderado de: ${kidsNames}.` : `Apoderado de: ${kidsNames}.`;
             } else {
                 // Si no hubo match por RUT, intentar match por nombre ULTRA ESTRICTO (solo coincidencias exactas de apellido + nombre)
                 const STOPWORDS = new Set(['de', 'del', 'la', 'las', 'los', 'san', 'santa', 'y', 'e', 'spa', 'ltda', 'sa', 'eirl']);
@@ -996,7 +1090,7 @@ exports.getSummary = async (req, res) => {
             ORDER BY a.category ASC
         `, [currentPeriod]);
 
-        // 7. Desglose por agrupación (Equipos Bayes - solo alumnos activos, sin producto cartesiano)
+        // 7. Desglose por agrupación (Equipos Bayes - separación limpia de agrupaciones dobles)
         const agrupacionesRes = await pool.query(`
             WITH ath_movs AS (
                 SELECT 
@@ -1007,19 +1101,31 @@ exports.getSummary = async (req, res) => {
                 FROM bank_movements
                 WHERE period = $1 AND status = 'CONCILIADO'
                 GROUP BY athlete_id
+            ),
+            split_athletes AS (
+                SELECT 
+                    a.id,
+                    a.monthly_fee,
+                    a.fee_type,
+                    TRIM(UNNEST(STRING_TO_ARRAY(COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación'), '/'))) as agrupacion,
+                    m.rec_mensualidad,
+                    m.rec_extras,
+                    m.rec_total
+                FROM athletes a
+                LEFT JOIN ath_movs m ON a.id = m.athlete_id
+                WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
             )
             SELECT 
-                COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación') as agrupacion,
-                COUNT(a.id) as total_alumnos,
-                COALESCE(SUM(a.monthly_fee) FILTER (WHERE a.fee_type != 'BECADO' AND a.fee_type != 'BECA_COMPLETA'), 0) as esperado,
-                COALESCE(SUM(m.rec_mensualidad), 0) as recaudado_mensualidad,
-                COALESCE(SUM(m.rec_extras), 0) as recaudado_extras,
-                COALESCE(SUM(m.rec_total), 0) as recaudado_total,
-                COALESCE(SUM(m.rec_total), 0) as recaudado
-            FROM athletes a
-            LEFT JOIN ath_movs m ON a.id = m.athlete_id
-            WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
-            GROUP BY COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación')
+                agrupacion,
+                COUNT(id) as total_alumnos,
+                COALESCE(SUM(monthly_fee) FILTER (WHERE fee_type != 'BECADO' AND fee_type != 'BECA_COMPLETA'), 0) as esperado,
+                COALESCE(SUM(rec_mensualidad), 0) as recaudado_mensualidad,
+                COALESCE(SUM(rec_extras), 0) as recaudado_extras,
+                COALESCE(SUM(rec_total), 0) as recaudado_total,
+                COALESCE(SUM(rec_total), 0) as recaudado
+            FROM split_athletes
+            WHERE agrupacion != '' AND agrupacion NOT ILIKE 'PF%' AND agrupacion NOT ILIKE '%PF'
+            GROUP BY agrupacion
             ORDER BY agrupacion ASC
         `, [currentPeriod]);
 
