@@ -1820,13 +1820,13 @@ footer::before {
     top: 100%;
     left: 0;
     right: 0;
-    background: #1a1a1a;
-    border: 1px solid var(--border-bright);
+    background: #1e1e1e;
+    border: 1px solid var(--accent-dim, #ff9100);
     border-radius: 8px;
-    max-height: 220px;
+    max-height: 240px;
     overflow-y: auto;
-    z-index: 10050;
-    box-shadow: 0 10px 28px rgba(0,0,0,0.7);
+    z-index: 10060;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.85);
     margin-top: 4px;
 }
 .ath-dropdown-item {
@@ -1836,15 +1836,35 @@ footer::before {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: background 0.15s;
+    transition: background 0.15s, color 0.15s;
     font-size: 0.85rem;
 }
 .ath-dropdown-item:last-child {
     border-bottom: none;
 }
-.ath-dropdown-item:hover {
+.ath-dropdown-item:hover,
+.ath-dropdown-item.active {
     background: #2c2c2c;
     color: var(--accent);
+}
+
+#f-tab-pending .f-table-container {
+    overflow: visible;
+}
+#f-tab-pending .f-table td {
+    position: relative;
+}
+#f-tab-pending tr:focus-within {
+    z-index: 50;
+    position: relative;
+}
+.pending-assign-box:focus-within {
+    z-index: 1000;
+}
+@media (max-width: 900px) {
+    #f-tab-pending .f-table-container {
+        overflow-x: auto;
+    }
 }
 .selected-ath-chip {
     display: inline-flex;

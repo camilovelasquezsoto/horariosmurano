@@ -97,6 +97,16 @@ function escQ(str) {
     return String(str || '').replace(/'/g, "\\'");
 }
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function toast(msg) {
     const el = document.getElementById('toast');
     if (!el) return;
@@ -1366,7 +1376,17 @@ function filterPendingTable() {
 
     filteredPendingCache = allFinancePendingMovements.filter(m => {
         // Filtro Concepto
-        if (concept !== 'TODOS' && m.category_concept !== concept) return false;
+        if (concept !== 'TODOS') {
+            if (concept === 'CAMPEONATO') {
+                if (m.category_concept !== 'CAMPEONATO' && !String(m.category_concept || '').includes('CAMPEONATO')) return false;
+            } else if (concept === 'POR_DEFINIR') {
+                if (m.category_concept !== 'POR_DEFINIR' && m.category_concept !== 'EXTRA') return false;
+            } else if (concept === 'OTROS') {
+                if (m.category_concept !== 'OTROS' && m.category_concept !== 'VARIOS') return false;
+            } else if (m.category_concept !== concept) {
+                return false;
+            }
+        }
 
         // Filtro Monto
         const amt = parseFloat(m.amount) || 0;
@@ -1458,6 +1478,10 @@ function renderPendingMovements(movements) {
 
     tbody.innerHTML = movements.map(m => {
         const selectedConcept = m.category_concept || 'MENSUALIDAD';
+        const preAth = m.athlete_id ? allFinanceAthletes.find(a => a.id === m.athlete_id) : null;
+        const hasPreAth = !!preAth;
+        const preAthName = preAth ? `${preAth.full_name} (${preAth.category})` : '';
+
         return `
         <tr>
             <td style="white-space:nowrap; font-size:0.82rem; color:var(--text-muted);">${m.date || 'S/F'}</td>
@@ -1471,7 +1495,11 @@ function renderPendingMovements(movements) {
             <td>
                 <select id="pending-concept-${m.id}" class="f-form-select" style="padding:4px 8px; font-size:0.8rem; background:#181818; border:1px solid #333; color:#fff; border-radius:6px; min-width:140px;">
                     <option value="POR_DEFINIR" ${(selectedConcept === 'POR_DEFINIR' || selectedConcept === 'EXTRA') ? 'selected' : ''}>⚡ Por definir</option>
-                    <option value="OTROS" ${selectedConcept === 'OTROS' ? 'selected' : ''}>📦 Otros (Varios)</option>
+                    <option value="CAMPEONATO" ${selectedConcept === 'CAMPEONATO' ? 'selected' : ''}>🏆 Campeonato / Torneo</option>
+                    <option value="INSCRIPCION_CAMPEONATO_VISITA" ${selectedConcept === 'INSCRIPCION_CAMPEONATO_VISITA' ? 'selected' : ''}>🏆 Inscripción Camp. (Visita)</option>
+                    <option value="PAGO_CAMPEONATO_LOCAL" ${selectedConcept === 'PAGO_CAMPEONATO_LOCAL' ? 'selected' : ''}>🥇 Pago Camp. (Local)</option>
+                    <option value="ARRIENDO_GYM" ${selectedConcept === 'ARRIENDO_GYM' ? 'selected' : ''}>🏢 Pago arriendo gym</option>
+                    <option value="ARRIENDO_CANCHA" ${selectedConcept === 'ARRIENDO_CANCHA' ? 'selected' : ''}>🏟️ Arriendo Cancha</option>
                     <option value="MENSUALIDAD" ${selectedConcept === 'MENSUALIDAD' ? 'selected' : ''}>💳 Mensualidad</option>
                     <option value="MATRICULA" ${selectedConcept === 'MATRICULA' ? 'selected' : ''}>🎓 Matrícula</option>
                     <option value="ROPA" ${selectedConcept === 'ROPA' ? 'selected' : ''}>👕 Ropa</option>
@@ -1479,20 +1507,20 @@ function renderPendingMovements(movements) {
                     <option value="PASES" ${selectedConcept === 'PASES' ? 'selected' : ''}>🎫 Pases</option>
                     <option value="TALLERES" ${selectedConcept === 'TALLERES' ? 'selected' : ''}>🏐 Talleres</option>
                     <option value="CLASES_PERSONALIZADAS" ${selectedConcept === 'CLASES_PERSONALIZADAS' ? 'selected' : ''}>🏋️ Clases personalizadas</option>
-                    <option value="ARRIENDO_GYM" ${selectedConcept === 'ARRIENDO_GYM' ? 'selected' : ''}>🏢 Pago arriendo gym</option>
+                    <option value="OTROS" ${selectedConcept === 'OTROS' ? 'selected' : ''}>📦 Otros (Varios)</option>
                 </select>
             </td>
             <td>
                 <div class="pending-assign-box" style="position:relative; min-width:260px;">
-                    <div id="pending-chip-${m.id}" class="selected-ath-chip hidden">
-                        <span id="pending-chip-name-${m.id}" style="font-size:0.8rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+                    <div id="pending-chip-${m.id}" class="selected-ath-chip ${hasPreAth ? '' : 'hidden'}">
+                        <span id="pending-chip-name-${m.id}" style="font-size:0.8rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">👤 ${escapeHtml(preAthName)}</span>
                         <button type="button" onclick="clearPendingSelectedAthlete(${m.id})">✕</button>
                     </div>
-                    <div id="pending-input-wrap-${m.id}">
-                        <input type="text" id="pending-input-${m.id}" class="f-form-input" style="font-size:0.82rem; padding:6px 10px;" placeholder="🔍 Escribe para buscar alumno..." oninput="searchAthletesForPending(${m.id}, this.value)" autocomplete="off">
+                    <div id="pending-input-wrap-${m.id}" style="position:relative;" class="${hasPreAth ? 'hidden' : ''}">
+                        <input type="text" id="pending-input-${m.id}" class="f-form-input" style="font-size:0.82rem; padding:6px 10px;" placeholder="🔍 Escribe para buscar alumno..." oninput="searchAthletesForPending(${m.id}, this.value)" onfocus="searchAthletesForPending(${m.id}, this.value)" onkeydown="handlePendingInputKey(event, ${m.id})" autocomplete="off">
                         <div id="pending-results-${m.id}" class="ath-dropdown-results hidden"></div>
                     </div>
-                    <input type="hidden" id="pending-val-${m.id}" value="">
+                    <input type="hidden" id="pending-val-${m.id}" value="${hasPreAth ? preAth.id : ''}">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
                         <label style="font-size:0.75rem; color:var(--text-muted); cursor:pointer;">
                             <input type="checkbox" id="assign-rem-${m.id}" checked> Recordar RUT
@@ -1519,17 +1547,26 @@ function searchAthletesForPending(movId, query) {
         return;
     }
 
+    if (!allFinanceAthletes || allFinanceAthletes.length === 0) {
+        resultsEl.innerHTML = `<div style="padding:8px 12px; font-size:0.8rem; color:var(--text-dim); text-align:center;">Cargando deportistas...</div>`;
+        resultsEl.classList.remove('hidden');
+        return;
+    }
+
     const matches = allFinanceAthletes.filter(a => matchStudent(a, query)).slice(0, 8);
 
     let html = '';
     if (matches.length === 0) {
-        html = `<div style="padding:8px 12px; font-size:0.8rem; color:var(--text-dim); text-align:center;">No se encontraron deportistas</div>`;
+        html = `<div style="padding:8px 12px; font-size:0.8rem; color:var(--text-dim); text-align:center;">No se encontraron deportistas con "${escapeHtml(query)}"</div>`;
     } else {
-        html = matches.map(a => `
-            <div class="ath-dropdown-item" onclick="selectAthleteForPending(${movId}, ${a.id}, '${escQ(a.full_name)}', '${escQ(a.category)}')">
+        html = matches.map((a, idx) => `
+            <div class="ath-dropdown-item ${idx === 0 ? 'active' : ''}" 
+                 data-idx="${idx}"
+                 onmousedown="selectAthleteForPending(${movId}, ${a.id}, '${escQ(a.full_name)}', '${escQ(a.category)}')"
+                 onclick="selectAthleteForPending(${movId}, ${a.id}, '${escQ(a.full_name)}', '${escQ(a.category)}')">
                 <div>
-                    <strong style="color:var(--text);">${a.full_name}</strong>
-                    <small style="color:var(--text-dim); display:block; font-size:0.75rem;">${a.category} • ${a.agrupacion || 'Sin Agrupación'}</small>
+                    <strong style="color:var(--text);">${escapeHtml(a.full_name)}</strong>
+                    <small style="color:var(--text-dim); display:block; font-size:0.75rem;">${escapeHtml(a.category)} • ${escapeHtml(a.agrupacion || 'Sin Agrupación')}</small>
                 </div>
                 <span style="font-weight:700; color:var(--accent-light); font-size:0.8rem;">${a.fee_type === 'BECADO' ? '$0' : formatCLP(a.monthly_fee)}</span>
             </div>
@@ -1538,7 +1575,7 @@ function searchAthletesForPending(movId, query) {
 
     html += `
         <div style="padding:6px; border-top:1px solid #333; background:rgba(255,255,255,0.03); text-align:center;">
-            <button type="button" class="btn-action-sm" onclick="openCreateAthleteFromPending(${movId}, '${escQ(query)}')" style="width:100%; font-size:0.78rem; padding:4px 8px; color:var(--accent-light); border-color:var(--accent-dim);">
+            <button type="button" class="btn-action-sm" onmousedown="openCreateAthleteFromPending(${movId}, '${escQ(query)}')" onclick="openCreateAthleteFromPending(${movId}, '${escQ(query)}')" style="width:100%; font-size:0.78rem; padding:4px 8px; color:var(--accent-light); border-color:var(--accent-dim);">
                 ➕ Crear nuevo alumno "${escapeHtml(query)}"
             </button>
         </div>
@@ -1548,18 +1585,97 @@ function searchAthletesForPending(movId, query) {
     resultsEl.classList.remove('hidden');
 }
 
+function handlePendingInputKey(event, movId) {
+    const resultsEl = document.getElementById(`pending-results-${movId}`);
+    if (!resultsEl || resultsEl.classList.contains('hidden')) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            assignMovement(movId);
+        }
+        return;
+    }
+
+    const items = resultsEl.querySelectorAll('.ath-dropdown-item');
+    if (!items || items.length === 0) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const inputVal = document.getElementById(`pending-input-${movId}`)?.value?.trim();
+            if (inputVal) {
+                openCreateAthleteFromPending(movId, inputVal);
+            }
+        }
+        return;
+    }
+
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        const activeItem = resultsEl.querySelector('.ath-dropdown-item.active') || items[0];
+        if (activeItem) {
+            activeItem.click();
+        }
+    } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        const activeItem = resultsEl.querySelector('.ath-dropdown-item.active');
+        if (!activeItem) {
+            items[0].classList.add('active');
+            items[0].scrollIntoView({ block: 'nearest' });
+        } else {
+            let next = activeItem.nextElementSibling;
+            while (next && !next.classList.contains('ath-dropdown-item')) {
+                next = next.nextElementSibling;
+            }
+            if (next) {
+                activeItem.classList.remove('active');
+                next.classList.add('active');
+                next.scrollIntoView({ block: 'nearest' });
+            }
+        }
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        const activeItem = resultsEl.querySelector('.ath-dropdown-item.active');
+        if (activeItem) {
+            let prev = activeItem.previousElementSibling;
+            while (prev && !prev.classList.contains('ath-dropdown-item')) {
+                prev = prev.previousElementSibling;
+            }
+            if (prev) {
+                activeItem.classList.remove('active');
+                prev.classList.add('active');
+                prev.scrollIntoView({ block: 'nearest' });
+            }
+        }
+    } else if (event.key === 'Escape') {
+        resultsEl.classList.add('hidden');
+    }
+}
+
 function selectAthleteForPending(movId, athleteId, athleteName, athleteCat) {
-    document.getElementById(`pending-val-${movId}`).value = athleteId;
-    document.getElementById(`pending-chip-name-${movId}`).textContent = `👤 ${athleteName} (${athleteCat})`;
-    document.getElementById(`pending-chip-${movId}`).classList.remove('hidden');
-    document.getElementById(`pending-input-wrap-${movId}`).classList.add('hidden');
-    document.getElementById(`pending-results-${movId}`).classList.add('hidden');
+    const valEl = document.getElementById(`pending-val-${movId}`);
+    if (valEl) valEl.value = athleteId;
+
+    const chipNameEl = document.getElementById(`pending-chip-name-${movId}`);
+    if (chipNameEl) chipNameEl.textContent = `👤 ${athleteName} (${athleteCat})`;
+
+    const chipEl = document.getElementById(`pending-chip-${movId}`);
+    if (chipEl) chipEl.classList.remove('hidden');
+
+    const wrapEl = document.getElementById(`pending-input-wrap-${movId}`);
+    if (wrapEl) wrapEl.classList.add('hidden');
+
+    const resultsEl = document.getElementById(`pending-results-${movId}`);
+    if (resultsEl) resultsEl.classList.add('hidden');
 }
 
 function clearPendingSelectedAthlete(movId) {
-    document.getElementById(`pending-val-${movId}`).value = '';
-    document.getElementById(`pending-chip-${movId}`).classList.add('hidden');
-    document.getElementById(`pending-input-wrap-${movId}`).classList.remove('hidden');
+    const valEl = document.getElementById(`pending-val-${movId}`);
+    if (valEl) valEl.value = '';
+
+    const chipEl = document.getElementById(`pending-chip-${movId}`);
+    if (chipEl) chipEl.classList.add('hidden');
+
+    const wrapEl = document.getElementById(`pending-input-wrap-${movId}`);
+    if (wrapEl) wrapEl.classList.remove('hidden');
+
     const input = document.getElementById(`pending-input-${movId}`);
     if (input) {
         input.value = '';
@@ -1573,14 +1689,18 @@ async function assignMovement(movId, forcedAthleteId) {
     const chk = document.getElementById(`assign-rem-${movId}`);
     const conceptSel = document.getElementById(`pending-concept-${movId}`);
     const concept = conceptSel ? conceptSel.value : 'MENSUALIDAD';
+    const textInput = document.getElementById(`pending-input-${movId}`);
+    const pendingText = textInput ? textInput.value.trim() : '';
 
     if (!athleteId) {
-        if (concept === 'ARRIENDO_GYM' || concept === 'OTROS') {
-            if (!confirm(`¿Deseas registrar este ingreso de ${concept === 'ARRIENDO_GYM' ? 'Pago arriendo gym' : 'Otros'} como ingreso general del club (sin alumno)?`)) {
-                return;
-            }
-        } else {
-            return toast('Busca y selecciona un alumno en el buscador primero (o elige Arriendo Gym / Otros para ingreso general)');
+        if (concept === 'MENSUALIDAD') {
+            return toast('⚠️ Para mensualidad debes buscar y seleccionar al alumno');
+        }
+        if (concept === 'POR_DEFINIR' || concept === 'EXTRA') {
+            return toast('⚠️ Selecciona una categoría (ej. Campeonato, Arriendo, Otros) para clasificar este pago');
+        }
+        if (pendingText) {
+            return toast(`⚠️ Escribiste "${pendingText}". Haz clic en el alumno de la lista o presiona Enter para seleccionarlo.`);
         }
     }
 
@@ -1599,7 +1719,8 @@ async function assignMovement(movId, forcedAthleteId) {
 
         const data = await res.json();
         if (res.ok) {
-            toast('✅ Pago asignado y conciliado con éxito');
+            const athName = athleteId ? (allFinanceAthletes.find(a => String(a.id) === String(athleteId))?.full_name || 'alumno') : 'ingreso general / profesor';
+            toast(`✅ Pago clasificado como "${getConceptLabel(concept)}" para ${athName} y conciliado`);
             loadFinanceData();
         } else {
             toast(data.error || 'Error al asignar');
@@ -1672,6 +1793,8 @@ function filterExtrasTable() {
                 if (m.category_concept !== 'POR_DEFINIR' && m.category_concept !== 'EXTRA') return false;
             } else if (conceptFilter === 'OTROS') {
                 if (m.category_concept !== 'OTROS' && m.category_concept !== 'VARIOS') return false;
+            } else if (conceptFilter === 'CAMPEONATO') {
+                if (m.category_concept !== 'CAMPEONATO' && !String(m.category_concept || '').includes('CAMPEONATO')) return false;
             } else if (m.category_concept !== conceptFilter) {
                 return false;
             }
@@ -1764,6 +1887,27 @@ function resetExtrasFilters() {
     filterExtrasTable();
 }
 
+function getConceptLabel(concept) {
+    const c = (concept || 'POR_DEFINIR').toUpperCase().replace(/\s+/g, '_');
+    const map = {
+        'MENSUALIDAD': '💳 Mensualidad',
+        'CAMPEONATO': '🏆 Campeonato / Torneo',
+        'INSCRIPCION_CAMPEONATO_VISITA': '🏆 Inscripción Camp. (Visita)',
+        'PAGO_CAMPEONATO_LOCAL': '🥇 Pago Camp. (Local)',
+        'ARRIENDO_GYM': '🏢 Pago arriendo gym',
+        'ARRIENDO_CANCHA': '🏟️ Arriendo Cancha',
+        'MATRICULA': '🎓 Matrícula',
+        'ROPA': '👕 Ropa',
+        'DEBE': '⏳ Debe',
+        'PASES': '🎫 Pases',
+        'TALLERES': '🏐 Talleres',
+        'CLASES_PERSONALIZADAS': '🏋️ Clases personalizadas',
+        'OTROS': '📦 Otros (Varios)',
+        'POR_DEFINIR': '⚡ Por definir'
+    };
+    return map[c] || concept || 'Concepto';
+}
+
 function getConceptBadgeHtml(concept) {
     const c = (concept || 'POR_DEFINIR').toUpperCase().replace(/\s+/g, '_');
     let cls = 'concept-por-definir';
@@ -1778,12 +1922,18 @@ function getConceptBadgeHtml(concept) {
     } else if (c === 'ARRIENDO_CANCHA') {
         cls = 'concept-arriendo_gym';
         label = '🏟️ Arriendo Cancha';
+    } else if (c === 'CAMPEONATO') {
+        cls = 'concept-pases';
+        label = '🏆 Campeonato / Torneo';
     } else if (c === 'INSCRIPCION_CAMPEONATO_VISITA') {
         cls = 'concept-pases';
         label = '🏆 Inscripción Camp. (Visita)';
     } else if (c === 'PAGO_CAMPEONATO_LOCAL') {
         cls = 'concept-pases';
         label = '🥇 Pago Camp. (Local)';
+    } else if (c.includes('CAMP') || c.includes('TORN')) {
+        cls = 'concept-pases';
+        label = '🏆 Campeonato';
     } else if (c === 'MATRICULA') {
         cls = 'concept-matricula';
         label = '🎓 Matrícula';
@@ -2146,7 +2296,7 @@ function renderSplitParts() {
                         <select class="f-form-select" style="padding:6px 10px; font-size:0.88rem;" onchange="onSplitPartConceptChange(${idx}, this.value)">
                             <option value="MENSUALIDAD" ${part.concept === 'MENSUALIDAD' ? 'selected' : ''}>💳 Mensualidad</option>
                             <option value="POR_DEFINIR" ${part.concept === 'POR_DEFINIR' ? 'selected' : ''}>⚡ Por Definir</option>
-                            <option value="ARRIENDO_CANCHA" ${part.concept === 'ARRIENDO_CANCHA' ? 'selected' : ''}>🏟️ Arriendo Cancha</option>
+                            <option value="CAMPEONATO" ${part.concept === 'CAMPEONATO' ? 'selected' : ''}>🏆 Campeonato / Torneo</option>
                             <option value="INSCRIPCION_CAMPEONATO_VISITA" ${part.concept === 'INSCRIPCION_CAMPEONATO_VISITA' ? 'selected' : ''}>🏆 Inscripción Camp. (Visita)</option>
                             <option value="PAGO_CAMPEONATO_LOCAL" ${part.concept === 'PAGO_CAMPEONATO_LOCAL' ? 'selected' : ''}>🥇 Pago Camp. (Local)</option>
                             <option value="MATRICULA" ${part.concept === 'MATRICULA' ? 'selected' : ''}>📋 Matrícula</option>
