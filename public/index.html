@@ -617,8 +617,10 @@
                 </table>
             </div>
         </div>
+    </div>
+
     <!-- MODAL: CLAVE MAESTRA DE ACCESO A FINANZAS -->
-    <div id="f-auth-modal" class="f-modal-overlay hidden" style="z-index: 10005;">
+    <div id="f-auth-modal" class="f-modal-overlay hidden" style="z-index: 10005;" onclick="if(event.target === this) closeFinanceAuthModal()">
         <div class="f-modal" style="max-width: 380px; text-align: center; padding: 26px 22px;">
             <div style="font-size: 2.2rem; margin-bottom: 8px;">🔐</div>
             <h3 style="margin-bottom: 6px; font-size: 1.15rem; color: #fff;">Acceso a Finanzas</h3>

@@ -882,7 +882,7 @@ function handleFinanceAuthSubmit(e) {
     const err = document.getElementById('f-auth-error-msg');
     const val = input ? input.value.trim() : '';
 
-    if (val === FINANCE_MASTER_PIN) {
+    if (val.toLowerCase() === FINANCE_MASTER_PIN.toLowerCase()) {
         sessionStorage.setItem('murano_finance_auth', 'true');
         closeFinanceAuthModal();
         toast('🔓 Acceso concedido a Finanzas');
