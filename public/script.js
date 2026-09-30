@@ -1815,7 +1815,7 @@ function renderCategoriesTable(categories) {
     if (!tbody) return;
 
     if (!categories || categories.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">Sin datos de agrupaciones.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">Sin datos de agrupaciones.</td></tr>`;
         return;
     }
 
@@ -1824,29 +1824,36 @@ function renderCategoriesTable(categories) {
         const esp = parseFloat(c.esperado) || 0;
         const recMens = parseFloat(c.recaudado_mensualidad) || 0;
         const recExt = parseFloat(c.recaudado_extras) || 0;
-        const rec = parseFloat(c.recaudado_total) || (recMens + recExt) || parseFloat(c.recaudado) || 0;
-        const pct = esp > 0 ? Math.min(100, Math.round((rec / esp) * 100)) : (rec > 0 ? 100 : 0);
+        const recTotal = parseFloat(c.recaudado_total) || (recMens + recExt) || parseFloat(c.recaudado) || 0;
+        
+        // El progreso de cobro mide el cumplimiento del arancel mensual de los alumnos del equipo
+        const pct = esp > 0 ? Math.min(100, Math.round((recMens / esp) * 100)) : (recMens > 0 ? 100 : 0);
         const barColor = pct >= 100 ? 'var(--success)' : pct >= 50 ? '#ffab00' : 'var(--danger)';
 
         return `
             <tr>
-                <td><strong style="color:var(--text); font-size:0.92rem;">${name}</strong></td>
+                <td><strong style="color:var(--text); font-size:0.92rem;">${escapeHtml(name)}</strong></td>
                 <td>${c.total_alumnos} deportistas</td>
-                <td>${formatCLP(esp)}</td>
-                <td style="color:${rec >= esp && esp > 0 ? 'var(--success)' : 'var(--accent-light)'}; font-weight:700;">
-                    ${formatCLP(rec)}
-                    ${recExt > 0 ? `<br><small style="color:var(--text-muted); font-size:0.75rem; font-weight:normal;">(Mens: ${formatCLP(recMens)} + Ext: ${formatCLP(recExt)})</small>` : ''}
+                <td style="font-weight:700; color:var(--text);">${formatCLP(esp)}</td>
+                <td style="color:var(--success); font-weight:700;">
+                    ${formatCLP(recMens)}
                 </td>
-                <td style="min-width:180px;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.8rem; font-weight:700;">
-                        <span>${pct}% recaudado</span>
+                <td style="color:var(--accent-light);">
+                    ${formatCLP(recExt)}
+                </td>
+                <td style="font-weight:700; color:${recTotal >= esp && esp > 0 ? 'var(--success)' : 'var(--text)'};">
+                    ${formatCLP(recTotal)}
+                </td>
+                <td style="min-width:170px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.78rem; font-weight:700; margin-bottom:2px;">
+                        <span>${pct}% cuotas al día</span>
                     </div>
                     <div class="cat-progress-bar">
                         <div class="cat-progress-fill" style="width:${pct}%; background:${barColor};"></div>
                     </div>
                 </td>
                 <td style="text-align:right; white-space:nowrap;">
-                    <button class="btn-action-sm" onclick="openAgrupacionDetailModal('${escapeHtml(name)}')" style="color:var(--accent-light); font-weight:700;">
+                    <button class="btn-action-sm" onclick="openAgrupacionDetailModal(decodeURIComponent('${encodeURIComponent(name)}'))" style="color:var(--accent-light); font-weight:700;">
                         👁️ Ver Alumnos
                     </button>
                 </td>
@@ -1879,10 +1886,12 @@ function openAgrupacionDetailModal(agrupName) {
         else p.classList.remove('active');
     });
 
+    const isCategoryMode = (typeof currentCategoriesViewMode !== 'undefined' ? currentCategoriesViewMode : 'agrupacion') === 'category';
+
     // Filtrar deportistas que pertenezcan a esta agrupación o categoría
     currentAgrupDetailAthletes = allFinanceAthletes.filter(a => {
         if (a.status === 'INACTIVO' || a.status === 'RETIRADO') return false;
-        if (categoriesViewMode === 'category') {
+        if (isCategoryMode) {
             return (a.category || '').trim().toUpperCase() === agrupName.trim().toUpperCase();
         }
         if (!a.agrupacion) return agrupName === 'Sin Agrupación';
@@ -2255,6 +2264,105 @@ function renderPayerLookupData(data) {
             `).join('');
         }
     }
+}
+
+// ── MODAL: REGISTRO DE ÚLTIMAS MODIFICACIONES DE PAGOS ──
+
+async function openRecentModificationsModal() {
+    document.getElementById('f-recent-modifications-modal')?.classList.remove('hidden');
+    await loadRecentModifications();
+}
+
+function closeRecentModificationsModal() {
+    document.getElementById('f-recent-modifications-modal')?.classList.add('hidden');
+}
+
+async function loadRecentModifications() {
+    const loadingEl = document.getElementById('recent-mods-loading');
+    const tbody = document.getElementById('recent-mods-tbody');
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">Cargando modificaciones recientes...</td></tr>`;
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/finance/movements/recent-modifications`);
+        const data = await res.json();
+        if (loadingEl) loadingEl.classList.add('hidden');
+
+        if (!res.ok || !data.modifications || data.modifications.length === 0) {
+            if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-muted);">No hay modificaciones recientes registradas.</td></tr>`;
+            return;
+        }
+
+        renderRecentModifications(data.modifications);
+    } catch (e) {
+        if (loadingEl) loadingEl.classList.add('hidden');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--danger);">Error al cargar historial de modificaciones.</td></tr>`;
+    }
+}
+
+function formatModDate(dateStr) {
+    if (!dateStr) return 'S/F';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
+        return d.toLocaleDateString('es-CL', {
+            day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+        });
+    } catch (e) {
+        return dateStr;
+    }
+}
+
+function getActionBadgeHtml(action) {
+    const act = (action || '').toUpperCase();
+    if (act === 'MENSUALIDAD') {
+        return `<span style="background:rgba(0,230,118,0.15); color:var(--success); border:1px solid rgba(0,230,118,0.3); padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">💳 Mensualidad</span>`;
+    }
+    if (act === 'SPLIT') {
+        return `<span style="background:rgba(187,134,252,0.15); color:#bb86fc; border:1px solid rgba(187,134,252,0.3); padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">✂️ Pago Dividido</span>`;
+    }
+    if (act === 'EDICION') {
+        return `<span style="background:rgba(33,150,243,0.15); color:#2196f3; border:1px solid rgba(33,150,243,0.3); padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">✏️ Editado</span>`;
+    }
+    return `<span style="background:rgba(255,171,0,0.15); color:#ffab00; border:1px solid rgba(255,171,0,0.3); padding:2px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">⚡ Asignado</span>`;
+}
+
+function renderRecentModifications(mods) {
+    const tbody = document.getElementById('recent-mods-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = mods.map(m => {
+        const studentInfo = m.athlete_name ? `
+            <div>
+                <strong style="color:var(--text); font-size:0.85rem; display:block;">${escapeHtml(m.athlete_name)}</strong>
+                <span class="cat-pill" style="font-size:0.7rem;">${escapeHtml(m.athlete_category || '')}</span>
+            </div>
+        ` : `<span style="color:var(--text-muted); font-size:0.78rem; font-style:italic;">General / Sin Alumno</span>`;
+
+        const conceptChange = m.concept_before && m.concept_before !== m.concept_after
+            ? `${getConceptBadgeHtml(m.concept_before)} ➔ ${getConceptBadgeHtml(m.concept_after)}`
+            : getConceptBadgeHtml(m.concept_after || 'POR_DEFINIR');
+
+        return `
+            <tr>
+                <td style="white-space:nowrap; font-size:0.8rem; color:var(--text-muted);">${formatModDate(m.created_at)}</td>
+                <td>${getActionBadgeHtml(m.action)}</td>
+                <td><strong style="color:var(--success); font-size:0.88rem;">${formatCLP(m.amount)}</strong></td>
+                <td>
+                    <strong style="color:var(--text); font-size:0.82rem; display:block;">${escapeHtml(m.payer_name || 'Desconocido')}</strong>
+                    <code style="color:var(--accent-light); font-size:0.75rem;">${m.formatted_rut || m.payer_rut || ''}</code>
+                </td>
+                <td>${studentInfo}</td>
+                <td>${conceptChange}</td>
+                <td style="max-width:200px; font-size:0.75rem; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(m.notes || '')}">
+                    ${escapeHtml(m.notes || '-')}
+                </td>
+                <td style="text-align:right; white-space:nowrap;">
+                    ${m.movement_id ? `<button class="btn-action-sm" onclick="closeRecentModificationsModal(); openEditMovementModal(${m.movement_id});" title="Ver o editar este movimiento" style="padding:3px 8px; font-size:0.75rem;">✏️ Ver</button>` : ''}
+                </td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // ── GESTIÓN DE PAGOS EXTRAS Y OTROS INGRESOS ──

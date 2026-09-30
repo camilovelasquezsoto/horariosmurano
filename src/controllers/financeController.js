@@ -959,6 +959,59 @@ exports.getMovements = async (req, res) => {
     }
 };
 
+// Helper para asegurar tabla de auditoría de modificaciones
+let auditTableInitialized = false;
+async function ensureAuditTable() {
+    if (auditTableInitialized) return;
+    try {
+        await pool.query(`
+            ALTER TABLE bank_movements ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+            
+            CREATE TABLE IF NOT EXISTS payment_audit_logs (
+                id SERIAL PRIMARY KEY,
+                movement_id INTEGER,
+                action VARCHAR(50),
+                athlete_id INTEGER REFERENCES athletes(id) ON DELETE SET NULL,
+                athlete_name VARCHAR(255),
+                payer_rut VARCHAR(50),
+                payer_name VARCHAR(255),
+                amount NUMERIC(12, 2),
+                concept_before VARCHAR(100),
+                concept_after VARCHAR(100),
+                notes TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        auditTableInitialized = true;
+    } catch (e) {
+        console.error('Error inicializando payment_audit_logs:', e.message);
+    }
+}
+
+async function logPaymentModification(data) {
+    try {
+        await ensureAuditTable();
+        await pool.query(`
+            INSERT INTO payment_audit_logs 
+            (movement_id, action, athlete_id, athlete_name, payer_rut, payer_name, amount, concept_before, concept_after, notes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `, [
+            data.movement_id || null,
+            data.action || 'MODIFICACION',
+            data.athlete_id || null,
+            data.athlete_name || null,
+            data.payer_rut || null,
+            data.payer_name || null,
+            data.amount !== undefined ? cleanAmount(data.amount) : null,
+            data.concept_before || null,
+            data.concept_after || null,
+            data.notes || null
+        ]);
+    } catch (err) {
+        console.error('Error guardando log de auditoría:', err.message);
+    }
+}
+
 // 9. Asignar movimiento pendiente a un deportista (y opcionalmente aprender el RUT)
 exports.assignMovement = async (req, res) => {
     try {
@@ -981,7 +1034,8 @@ exports.assignMovement = async (req, res) => {
              SET athlete_id = $1, status = 'CONCILIADO', 
                  period = COALESCE($2, period),
                  category_concept = $3,
-                 notes = $4
+                 notes = $4,
+                 updated_at = CURRENT_TIMESTAMP
              WHERE id = $5 RETURNING *`,
             [athId, period || mov.period, newConcept, newNotes, movement_id]
         );
@@ -995,6 +1049,27 @@ exports.assignMovement = async (req, res) => {
                 [athId, mov.payer_rut, mov.payer_name || 'Apoderado', 'Apoderado']
             );
         }
+
+        // Registrar en auditoría
+        let athName = null;
+        if (athId) {
+            const athR = await pool.query('SELECT first_name, last_name FROM athletes WHERE id = $1', [athId]);
+            if (athR.rows.length > 0) {
+                athName = `${athR.rows[0].first_name} ${athR.rows[0].last_name}`;
+            }
+        }
+        await logPaymentModification({
+            movement_id: movement_id,
+            action: newConcept === 'MENSUALIDAD' ? 'MENSUALIDAD' : 'ASIGNACION',
+            athlete_id: athId,
+            athlete_name: athName,
+            payer_rut: mov.payer_rut,
+            payer_name: mov.payer_name,
+            amount: mov.amount,
+            concept_before: mov.category_concept,
+            concept_after: newConcept,
+            notes: newNotes
+        });
 
         res.json({
             message: 'Movimiento asignado exitosamente',
@@ -1265,6 +1340,7 @@ exports.updateMovement = async (req, res) => {
             return res.status(400).json({ error: 'No se enviaron campos para actualizar' });
         }
 
+        updateFields.push('updated_at = CURRENT_TIMESTAMP');
         params.push(id);
         const query = `UPDATE bank_movements SET ${updateFields.join(', ')} WHERE id = $${pIdx} RETURNING *`;
         const result = await pool.query(query, params);
@@ -1272,6 +1348,25 @@ exports.updateMovement = async (req, res) => {
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Movimiento no encontrado' });
         }
+
+        const up = result.rows[0];
+        let athName = null;
+        if (up.athlete_id) {
+            const athR = await pool.query('SELECT first_name, last_name FROM athletes WHERE id = $1', [up.athlete_id]);
+            if (athR.rows.length > 0) athName = `${athR.rows[0].first_name} ${athR.rows[0].last_name}`;
+        }
+        await logPaymentModification({
+            movement_id: id,
+            action: 'EDICION',
+            athlete_id: up.athlete_id,
+            athlete_name: athName,
+            payer_rut: up.payer_rut,
+            payer_name: up.payer_name,
+            amount: up.amount,
+            concept_before: null,
+            concept_after: up.category_concept,
+            notes: up.notes
+        });
 
         res.json({
             message: 'Movimiento actualizado correctamente',
@@ -1310,8 +1405,8 @@ exports.splitMovement = async (req, res) => {
         for (const s of splits) {
             const insRes = await pool.query(
                 `INSERT INTO bank_movements 
-                 (date, transfer_type, account_dest, payer_rut, payer_name, bank_origin, account_origin, amount, athlete_id, period, category_concept, status, notes)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+                 (date, transfer_type, account_dest, payer_rut, payer_name, bank_origin, account_origin, amount, athlete_id, period, category_concept, status, notes, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, CURRENT_TIMESTAMP) RETURNING *`,
                 [
                     orig.date, orig.transfer_type, orig.account_dest, orig.payer_rut, orig.payer_name,
                     orig.bank_origin, orig.account_origin, cleanAmount(s.amount),
@@ -1325,6 +1420,20 @@ exports.splitMovement = async (req, res) => {
             createdSplits.push(insRes.rows[0]);
         }
 
+        // Registrar en auditoría
+        await logPaymentModification({
+            movement_id: movement_id,
+            action: 'SPLIT',
+            athlete_id: null,
+            athlete_name: null,
+            payer_rut: orig.payer_rut,
+            payer_name: orig.payer_name,
+            amount: orig.amount,
+            concept_before: orig.category_concept,
+            concept_after: 'DIVIDIDO',
+            notes: `Dividido en ${splits.length} partes`
+        });
+
         // Eliminar el movimiento original para no duplicar el total
         await pool.query('DELETE FROM bank_movements WHERE id = $1', [movement_id]);
 
@@ -1335,6 +1444,79 @@ exports.splitMovement = async (req, res) => {
     } catch (err) {
         console.error('Error al dividir pago:', err);
         res.status(500).json({ error: 'Error al dividir pago', details: err.message });
+    }
+};
+
+// 14. Obtener las últimas modificaciones de pagos
+exports.getRecentModifications = async (req, res) => {
+    try {
+        await ensureAuditTable();
+        const logsRes = await pool.query(`
+            SELECT 
+                l.id,
+                l.movement_id,
+                l.action,
+                l.athlete_id,
+                COALESCE(l.athlete_name, a.first_name || ' ' || a.last_name) as athlete_name,
+                a.category as athlete_category,
+                l.payer_rut,
+                l.payer_name,
+                l.amount,
+                l.concept_before,
+                l.concept_after,
+                l.notes,
+                l.created_at
+            FROM payment_audit_logs l
+            LEFT JOIN athletes a ON l.athlete_id = a.id
+            ORDER BY l.created_at DESC
+            LIMIT 50
+        `);
+
+        let logs = logsRes.rows;
+        if (logs.length < 15) {
+            const fallbackRes = await pool.query(`
+                SELECT 
+                    m.id as movement_id,
+                    CASE 
+                        WHEN m.category_concept = 'MENSUALIDAD' THEN 'MENSUALIDAD'
+                        WHEN m.notes ILIKE '%Desglose%' THEN 'SPLIT'
+                        ELSE 'ASIGNACION'
+                    END as action,
+                    m.athlete_id,
+                    a.first_name || ' ' || a.last_name as athlete_name,
+                    a.category as athlete_category,
+                    m.payer_rut,
+                    m.payer_name,
+                    m.amount,
+                    'POR_DEFINIR' as concept_before,
+                    m.category_concept as concept_after,
+                    m.notes,
+                    COALESCE(m.updated_at, m.created_at) as created_at
+                FROM bank_movements m
+                LEFT JOIN athletes a ON m.athlete_id = a.id
+                WHERE m.athlete_id IS NOT NULL OR m.status = 'CONCILIADO'
+                ORDER BY COALESCE(m.updated_at, m.created_at) DESC
+                LIMIT 30
+            `);
+
+            const existingIds = new Set(logs.map(l => l.movement_id));
+            fallbackRes.rows.forEach(fb => {
+                if (!existingIds.has(fb.movement_id)) {
+                    logs.push(fb);
+                }
+            });
+            logs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        }
+
+        res.json({
+            modifications: logs.slice(0, 50).map(l => ({
+                ...l,
+                formatted_rut: formatRut(l.payer_rut || '')
+            }))
+        });
+    } catch (err) {
+        console.error('Error al consultar últimas modificaciones:', err);
+        res.status(500).json({ error: 'Error al consultar modificaciones', details: err.message });
     }
 };
 

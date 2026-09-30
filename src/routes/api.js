@@ -77,6 +77,7 @@ router.post('/finance/cartola/upload', upload.single('cartola'), financeControll
 router.post('/finance/cartola/process', financeController.processCartola);
 
 router.get('/finance/movements', financeController.getMovements);
+router.get('/finance/movements/recent-modifications', financeController.getRecentModifications);
 router.post('/finance/movements/assign', financeController.assignMovement);
 router.put('/finance/movements/:id', financeController.updateMovement);
 router.post('/finance/movements/split', financeController.splitMovement);
