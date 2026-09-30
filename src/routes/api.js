@@ -93,8 +93,9 @@ router.post('/finance/expenses', financeController.createExpense);
 router.put('/finance/expenses/:id', financeController.updateExpense);
 router.delete('/finance/expenses/:id', financeController.deleteExpense);
 
-// Sincronización e Importación de datos desde Bayes
+// Sincronización e Importación de datos desde Bayes y Excel
 router.post('/finance/athletes/import-bayes', financeController.importBayesData);
 router.post('/finance/bayes/import', financeController.importBayesData);
+router.post('/finance/athletes/sync-excel', financeController.syncAthletesExcel);
 
 module.exports = router;

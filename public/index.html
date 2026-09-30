@@ -218,6 +218,7 @@
 
                 <select id="f-semaforo-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:170px;">
                     <option value="TODOS">Todos los Estados</option>
+                    <option value="DEUDORES">🔴 Con Deuda (Todos)</option>
                     <option value="AL_DIA">🟢 Al Día</option>
                     <option value="AMARILLO">🟡 1 Mes Pendiente</option>
                     <option value="NARANJA">🟠 2 Meses Pendientes</option>
@@ -239,6 +240,7 @@
 
                 <div style="display:flex; gap:8px; margin-left:auto; align-items:center;">
                     <button class="btn-action-sm" onclick="exportDebtorsCSV()" title="Descargar planilla de deudores">📑 Deudores CSV</button>
+                    <button class="btn-action-sm" onclick="openSyncAthletesModal()" title="Sincronizar deportistas y apoderados desde Excel">📊 Actualizar Jugadores</button>
                     <button class="primary" onclick="openNewAthleteModal()" style="padding:6px 12px; font-size:0.82rem;">+ Nuevo Alumno</button>
                 </div>
             </div>
@@ -1277,6 +1279,77 @@
             <div class="f-modal-footer">
                 <button class="btn-action-sm" onclick="closeExpenseModal()">Cancelar</button>
                 <button class="primary" onclick="saveExpense()">✓ Guardar Egreso</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: ACTUALIZAR JUGADORES (SINCRONIZAR EXCEL / FORMULARIO) -->
+    <div id="f-sync-athletes-modal" class="f-modal-overlay hidden" style="z-index: 10020;" onclick="if(event.target === this) closeSyncAthletesModal()">
+        <div class="f-modal-box" style="max-width:850px; width:95%; max-height:90vh; display:flex; flex-direction:column;">
+            <div class="f-modal-header" style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                    <h3 style="margin:0; font-size:1.15rem; color:var(--text);">📊 Actualizar Jugadores desde Excel</h3>
+                    <p style="margin:4px 0 0; font-size:0.8rem; color:var(--text-muted);">
+                        Sube tu archivo de respaldo (Google Forms Murano, Excel de Deportistas o Cartola) para detectar automáticamente alumnos no registrados o actualizar teléfonos de apoderados.
+                    </p>
+                </div>
+                <button type="button" onclick="closeSyncAthletesModal()" style="background:transparent; border:none; color:var(--text-muted); font-size:1.4rem; cursor:pointer; line-height:1;">✕</button>
+            </div>
+
+            <div class="f-modal-body" style="overflow-y:auto; flex:1; padding:16px 20px;">
+                <!-- Zona de arrastre -->
+                <div class="drop-zone" id="sync-athletes-drop-zone" onclick="document.getElementById('sync-athletes-file-input').click()" style="padding:26px 15px; border:2px dashed rgba(255,255,255,0.15); border-radius:12px; background:rgba(255,255,255,0.02); text-align:center; cursor:pointer; transition:0.2s;">
+                    <input type="file" id="sync-athletes-file-input" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleSyncAthletesFile(event)">
+                    <div style="font-size:2rem; margin-bottom:8px;">📥</div>
+                    <div style="font-size:0.95rem; font-weight:700; color:var(--text);">Arrastra aquí el archivo Excel o Formulario de Ingreso</div>
+                    <div style="font-size:0.78rem; color:var(--text-muted); margin-top:4px;">o haz clic para seleccionar (.xlsx, .xls o .csv)</div>
+                </div>
+
+                <!-- Spinner / Loading -->
+                <div id="sync-athletes-loading" class="hidden" style="text-align:center; padding:30px 10px;">
+                    <div class="spinner" style="margin:0 auto 12px; width:32px; height:32px; border:3px solid rgba(255,255,255,0.1); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite;"></div>
+                    <span style="font-size:0.88rem; color:var(--text-muted);" id="sync-loading-text">Analizando y cruzando con la base de datos...</span>
+                </div>
+
+                <!-- Preview Box -->
+                <div id="sync-athletes-preview" class="hidden" style="margin-top:16px;">
+                    <!-- Stat pills -->
+                    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+                        <button type="button" class="f-pill active" id="btn-sync-tab-nuevos" onclick="setSyncPreviewTab('nuevos')" style="display:flex; align-items:center; gap:6px;">
+                            <span>🟢 Nuevos Alumnos</span>
+                            <span class="tab-badge" id="badge-sync-nuevos" style="background:var(--success); color:#000;">0</span>
+                        </button>
+                        <button type="button" class="f-pill" id="btn-sync-tab-actualizados" onclick="setSyncPreviewTab('actualizados')" style="display:flex; align-items:center; gap:6px;">
+                            <span>🟡 Con Actualizaciones</span>
+                            <span class="tab-badge" id="badge-sync-actualizados" style="background:#ffab00; color:#000;">0</span>
+                        </button>
+                        <span style="margin-left:auto; font-size:0.8rem; color:var(--text-muted); align-self:center;" id="sync-athletes-stat-unchanged">⚪ 0 ya al día</span>
+                    </div>
+
+                    <!-- Tabla de previsualización -->
+                    <div class="f-table-container" style="max-height:280px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;">
+                        <table class="f-table" style="font-size:0.82rem;">
+                            <thead id="sync-preview-thead">
+                                <tr>
+                                    <th>Alumno</th>
+                                    <th>RUT</th>
+                                    <th>Categoría / Agrupación</th>
+                                    <th>Tel. Alumno</th>
+                                    <th>Tel. Apoderado</th>
+                                    <th>Fecha Ingreso</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sync-preview-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="f-modal-footer" style="display:flex; justify-content:space-between; align-items:center; padding:12px 20px; border-top:1px solid var(--border);">
+                <button type="button" class="btn-action-sm" onclick="closeSyncAthletesModal()">Cancelar</button>
+                <button type="button" id="btn-apply-sync-athletes" class="primary hidden" onclick="applyAthletesSync()" style="padding:7px 16px; font-size:0.85rem;">
+                    🚀 Sincronizar e Incorporar a la Base de Datos
+                </button>
             </div>
         </div>
     </div>

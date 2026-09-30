@@ -1043,6 +1043,14 @@ async function loadFinanceData() {
     }
 }
 
+function cleanAgrupacionStr(agrup) {
+    if (!agrup) return '';
+    const parts = agrup.split('/').map(s => s.trim());
+    const cleanParts = parts.filter(p => !p.match(/^PF\b/i) && !p.match(/\bPF\b/i) && p.length > 0);
+    const unique = Array.from(new Set(cleanParts));
+    return unique.join(' / ') || agrup;
+}
+
 function populateCategoryFilter(athletes) {
     const selCat = document.getElementById('f-cat-filter');
     const selAgrup = document.getElementById('f-agrupacion-filter');
@@ -1050,7 +1058,7 @@ function populateCategoryFilter(athletes) {
     const modalAgrup = document.getElementById('modal-edit-agrupacion');
 
     const cats = [...new Set(athletes.map(a => a.category).filter(Boolean))].sort();
-    const agrups = [...new Set(athletes.map(a => a.agrupacion).filter(Boolean))].sort();
+    const agrups = [...new Set(athletes.map(a => cleanAgrupacionStr(a.agrupacion)).filter(Boolean))].sort();
 
     if (selCat) {
         const currentVal = selCat.value;
@@ -1197,11 +1205,16 @@ function filterAthletesTable() {
         // Filtro Semáforo Deuda
         if (semaforo !== 'TODOS' && semaforo !== 'INACTIVO') {
             const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : a.payment_status === 'BECADO' ? 'BECADO' : 'AMARILLO');
-            if (semaforo === 'AL_DIA' && sem !== 'AL_DIA' && a.payment_status !== 'PAGADO') return false;
-            if (semaforo === 'AMARILLO' && sem !== 'AMARILLO') return false;
-            if (semaforo === 'NARANJA' && sem !== 'NARANJA') return false;
-            if (semaforo === 'ROJO' && sem !== 'ROJO') return false;
-            if (semaforo === 'BECADO' && sem !== 'BECADO' && a.payment_status !== 'BECADO') return false;
+            if (semaforo === 'DEUDORES') {
+                const hasDebt = (parseFloat(a.debt_amount) > 0) || (sem === 'AMARILLO' || sem === 'NARANJA' || sem === 'ROJO');
+                if (!hasDebt || sem === 'AL_DIA' || sem === 'BECADO' || a.payment_status === 'BECADO') return false;
+            } else {
+                if (semaforo === 'AL_DIA' && sem !== 'AL_DIA' && a.payment_status !== 'PAGADO') return false;
+                if (semaforo === 'AMARILLO' && sem !== 'AMARILLO') return false;
+                if (semaforo === 'NARANJA' && sem !== 'NARANJA') return false;
+                if (semaforo === 'ROJO' && sem !== 'ROJO') return false;
+                if (semaforo === 'BECADO' && sem !== 'BECADO' && a.payment_status !== 'BECADO') return false;
+            }
         }
 
         // Filtro Arancel / Cuota
@@ -3929,10 +3942,288 @@ async function executeRestoreBackup() {
     reader.readAsText(file);
 }
 
+// ── ACTUALIZADOR / SINCRONIZADOR DE DEPORTISTAS DESDE EXCEL ──
+
+let syncAthletesPreviewData = null;
+let currentSyncPreviewTab = 'nuevos';
+
+function openSyncAthletesModal() {
+    syncAthletesPreviewData = null;
+    currentSyncPreviewTab = 'nuevos';
+    document.getElementById('sync-athletes-preview')?.classList.add('hidden');
+    document.getElementById('sync-athletes-loading')?.classList.add('hidden');
+    document.getElementById('sync-athletes-drop-zone')?.classList.remove('hidden');
+    document.getElementById('btn-apply-sync-athletes')?.classList.add('hidden');
+    const finp = document.getElementById('sync-athletes-file-input');
+    if (finp) finp.value = '';
+    document.getElementById('f-sync-athletes-modal')?.classList.remove('hidden');
+    initSyncAthletesDropZone();
+}
+
+function closeSyncAthletesModal() {
+    document.getElementById('f-sync-athletes-modal')?.classList.add('hidden');
+}
+
+function initSyncAthletesDropZone() {
+    const dropZone = document.getElementById('sync-athletes-drop-zone');
+    if (!dropZone || dropZone.dataset.initialized) return;
+    dropZone.dataset.initialized = 'true';
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.style.borderColor = 'var(--accent)';
+            dropZone.style.background = 'rgba(255, 255, 255, 0.06)';
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+            dropZone.style.background = 'rgba(255, 255, 255, 0.02)';
+        }, false);
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt ? dt.files : null;
+        if (files && files.length > 0) {
+            handleSyncAthletesFile({ target: { files: files } });
+        }
+    }, false);
+}
+
+async function handleSyncAthletesFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const loadingEl = document.getElementById('sync-athletes-loading');
+    const dropZone = document.getElementById('sync-athletes-drop-zone');
+    const loadingText = document.getElementById('sync-loading-text');
+
+    if (dropZone) dropZone.classList.add('hidden');
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (loadingText) loadingText.textContent = `Leyendo "${file.name}"...`;
+
+    try {
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonRows = XLSX.utils.sheet_to_json(worksheet);
+
+        if (!jsonRows || jsonRows.length === 0) {
+            toast('⚠️ El archivo Excel no contiene filas con datos');
+            if (dropZone) dropZone.classList.remove('hidden');
+            if (loadingEl) loadingEl.classList.add('hidden');
+            return;
+        }
+
+        if (loadingText) loadingText.textContent = `Cruzando ${jsonRows.length} registros con la base de datos...`;
+
+        // Llamar a la API en modo preview_only
+        const res = await fetch(`${API_BASE_URL}/finance/athletes/sync-excel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: jsonRows, preview_only: true })
+        });
+
+        const previewData = await res.json();
+        if (!res.ok) {
+            toast(previewData.error || 'Error al procesar archivo');
+            if (dropZone) dropZone.classList.remove('hidden');
+            if (loadingEl) loadingEl.classList.add('hidden');
+            return;
+        }
+
+        syncAthletesPreviewData = previewData;
+        if (loadingEl) loadingEl.classList.add('hidden');
+        renderSyncPreview();
+    } catch (err) {
+        console.error('Error procesando archivo de sincronización:', err);
+        toast('Error al leer el archivo Excel: ' + err.message);
+        if (dropZone) dropZone.classList.remove('hidden');
+        if (loadingEl) loadingEl.classList.add('hidden');
+    }
+}
+
+function renderSyncPreview() {
+    if (!syncAthletesPreviewData) return;
+    const previewBox = document.getElementById('sync-athletes-preview');
+    if (previewBox) previewBox.classList.remove('hidden');
+
+    const bNuevos = document.getElementById('badge-sync-nuevos');
+    const bActualizados = document.getElementById('badge-sync-actualizados');
+    const statUnchanged = document.getElementById('sync-athletes-stat-unchanged');
+    const applyBtn = document.getElementById('btn-apply-sync-athletes');
+
+    const nuevosCount = syncAthletesPreviewData.nuevos_count || 0;
+    const actCount = syncAthletesPreviewData.actualizados_count || 0;
+
+    if (bNuevos) bNuevos.textContent = nuevosCount;
+    if (bActualizados) bActualizados.textContent = actCount;
+    if (statUnchanged) statUnchanged.textContent = `⚪ ${syncAthletesPreviewData.sin_cambios_count || 0} ya al día`;
+
+    if (applyBtn) {
+        if (nuevosCount > 0 || actCount > 0) {
+            applyBtn.classList.remove('hidden');
+            applyBtn.textContent = `🚀 Aplicar Sincronización (${nuevosCount} nuevos, ${actCount} cambios)`;
+        } else {
+            applyBtn.classList.add('hidden');
+            toast('ℹ️ Todos los deportistas del archivo ya están registrados y al día');
+        }
+    }
+
+    if (nuevosCount === 0 && actCount > 0) {
+        currentSyncPreviewTab = 'actualizados';
+    } else {
+        currentSyncPreviewTab = 'nuevos';
+    }
+
+    updateSyncPreviewTabUI();
+    renderSyncPreviewTable();
+}
+
+function setSyncPreviewTab(tab) {
+    currentSyncPreviewTab = tab;
+    updateSyncPreviewTabUI();
+    renderSyncPreviewTable();
+}
+
+function updateSyncPreviewTabUI() {
+    const btnNuevos = document.getElementById('btn-sync-tab-nuevos');
+    const btnAct = document.getElementById('btn-sync-tab-actualizados');
+    if (currentSyncPreviewTab === 'nuevos') {
+        btnNuevos?.classList.add('active');
+        btnAct?.classList.remove('active');
+    } else {
+        btnAct?.classList.add('active');
+        btnNuevos?.classList.remove('active');
+    }
+}
+
+function renderSyncPreviewTable() {
+    if (!syncAthletesPreviewData) return;
+    const thead = document.getElementById('sync-preview-thead');
+    const tbody = document.getElementById('sync-preview-tbody');
+    if (!tbody || !thead) return;
+
+    if (currentSyncPreviewTab === 'nuevos') {
+        thead.innerHTML = `
+            <tr>
+                <th>Alumno</th>
+                <th>RUT</th>
+                <th>Agrupación / Categoría</th>
+                <th>Tel. Alumno</th>
+                <th>Tel. Apoderado</th>
+                <th>Fecha Ingreso</th>
+            </tr>
+        `;
+        const list = syncAthletesPreviewData.nuevos || [];
+        if (list.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--text-muted);">No se detectaron alumnos nuevos en este archivo.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = list.map(n => `
+            <tr>
+                <td><strong style="color:var(--text);">${n.first_name} ${n.last_name}</strong></td>
+                <td><span style="font-family:monospace; color:var(--text-muted);">${n.rut || '-'}</span></td>
+                <td><span class="f-cat-badge">${n.agrupacion || n.category}</span></td>
+                <td>${n.phone || '-'}</td>
+                <td><strong style="color:var(--accent);">${n.apoderado_phone || '-'}</strong></td>
+                <td>${n.join_date || '-'}</td>
+            </tr>
+        `).join('');
+    } else {
+        thead.innerHTML = `
+            <tr>
+                <th>Alumno</th>
+                <th>RUT</th>
+                <th>Datos Actuales</th>
+                <th>Nuevos Datos Detectados</th>
+            </tr>
+        `;
+        const list = syncAthletesPreviewData.actualizados || [];
+        if (list.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding:20px; color:var(--text-muted);">No hay actualizaciones de contacto para alumnos existentes.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = list.map(a => {
+            const changesList = Object.entries(a.changes).map(([k, v]) => {
+                const label = k === 'apoderado_phone' ? 'Tel. Apoderado' : k === 'phone' ? 'Tel. Alumno' : k === 'join_date' ? 'F. Ingreso' : k;
+                return `<div><strong>${label}:</strong> <span style="color:var(--success); font-weight:700;">${v}</span></div>`;
+            }).join('');
+
+            const currList = Object.keys(a.changes).map(k => {
+                const label = k === 'apoderado_phone' ? 'Tel. Apoderado' : k === 'phone' ? 'Tel. Alumno' : k === 'join_date' ? 'F. Ingreso' : k;
+                return `<div>${label}: ${a.current[k] || '<em style="color:var(--text-muted);">Vacío</em>'}</div>`;
+            }).join('');
+
+            return `
+                <tr>
+                    <td><strong style="color:var(--text);">${a.name}</strong></td>
+                    <td><span style="font-family:monospace; color:var(--text-muted);">${a.rut || '-'}</span></td>
+                    <td style="font-size:0.78rem; color:var(--text-muted);">${currList}</td>
+                    <td style="font-size:0.78rem;">${changesList}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+}
+
+async function applyAthletesSync() {
+    if (!syncAthletesPreviewData) return;
+    const applyBtn = document.getElementById('btn-apply-sync-athletes');
+    if (applyBtn) {
+        applyBtn.disabled = true;
+        applyBtn.textContent = '⏳ Aplicando cambios...';
+    }
+
+    try {
+        const payload = {
+            items: [
+                ...(syncAthletesPreviewData.nuevos || []),
+                ...(syncAthletesPreviewData.actualizados || [])
+            ],
+            preview_only: false
+        };
+
+        const res = await fetch(`${API_BASE_URL}/finance/athletes/sync-excel`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+            toast(`🎉 ${data.message || 'Sincronización completada exitosamente'}`);
+            closeSyncAthletesModal();
+            loadFinanceData();
+        } else {
+            toast(data.error || 'Error al aplicar sincronización');
+            if (applyBtn) {
+                applyBtn.disabled = false;
+                applyBtn.textContent = '🚀 Reintentar Sincronización';
+            }
+        }
+    } catch (err) {
+        console.error('Error aplicando sincronización:', err);
+        toast('Error de conexión al aplicar sincronización');
+        if (applyBtn) {
+            applyBtn.disabled = false;
+            applyBtn.textContent = '🚀 Reintentar Sincronización';
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     updateUI();
     renderList('gym');
     initCartolaDropZone();
+    initSyncAthletesDropZone();
 });
 
 // ── ACCESIBILIDAD Y CIERRE DE MODALES (TECLA ESC Y CLICS EXTERNOS) ──
@@ -3946,6 +4237,7 @@ window.addEventListener('keydown', (e) => {
         closeWhatsAppModal();
         closeExpenseModal();
         closeBayesSyncModal();
+        closeSyncAthletesModal();
         document.querySelectorAll('.ath-dropdown-results').forEach(el => el.classList.add('hidden'));
     }
 });

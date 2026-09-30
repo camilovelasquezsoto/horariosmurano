@@ -673,15 +673,28 @@ exports.processCartola = async (req, res) => {
                     movementNotes = movementNotes ? `${movementNotes} | Apoderado de: ${kidsNames}. Usa "Dividir Pago" si es pago conjunto.` : `Apoderado de: ${kidsNames}. Usa "Dividir Pago" si es pago conjunto.`;
                 }
             } else {
-                // Si no hubo match por RUT, intentar match por nombre para transferencias internas Scotiabank
+                // Si no hubo match por RUT, intentar match por nombre ULTRA ESTRICTO (solo coincidencias exactas de apellido + nombre)
+                const STOPWORDS = new Set(['de', 'del', 'la', 'las', 'los', 'san', 'santa', 'y', 'e', 'spa', 'ltda', 'sa', 'eirl']);
                 if (mov.payer_name && mov.payer_name.length > 5) {
                     const normPayer = cleanStr(mov.payer_name);
-                    const tokens = normPayer.split(/\s+/).filter(w => w.length > 2);
-                    if (tokens.length >= 2) {
+                    const payerTokens = normPayer.split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w));
+                    
+                    if (payerTokens.length >= 2) {
                         const nameMatches = allAthletes.filter(a => {
-                            const normAth = cleanStr(`${a.first_name} ${a.last_name}`);
-                            return tokens.every(t => normAth.includes(t)) || (tokens.filter(t => normAth.includes(t)).length >= 2);
+                            const athFirstTokens = cleanStr(a.first_name).split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w));
+                            const athLastTokens = cleanStr(a.last_name).split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w));
+                            
+                            // EXIGENCIA 1: Debe coincidir obligatoriamente al menos un apellido completo (exact word match)
+                            const surnameMatch = athLastTokens.some(alt => payerTokens.includes(alt));
+                            if (!surnameMatch) return false;
+
+                            // EXIGENCIA 2: Debe coincidir al menos un nombre o segundo apellido completo (exact word match)
+                            const firstNameOrSecondSurnameMatch = athFirstTokens.some(aft => payerTokens.includes(aft)) || 
+                                (athLastTokens.filter(alt => payerTokens.includes(alt)).length >= 2);
+                            
+                            return firstNameOrSecondSurnameMatch;
                         });
+
                         if (nameMatches.length === 1) {
                             const ath = nameMatches[0];
                             athleteId = ath.id;
@@ -691,7 +704,7 @@ exports.processCartola = async (req, res) => {
                             if (categoryConcept === 'POR_DEFINIR' && isStrictFeeAmount && Math.abs(amt - fee) < 1) {
                                 categoryConcept = 'MENSUALIDAD';
                             }
-                            movementNotes = movementNotes ? `${movementNotes} | Asignado automáticamente por nombre: ${ath.first_name} ${ath.last_name}` : `Asignado automáticamente por nombre: ${ath.first_name} ${ath.last_name}`;
+                            movementNotes = movementNotes ? `${movementNotes} | Asignado automáticamente por coincidencia estricta de nombre: ${ath.first_name} ${ath.last_name}` : `Asignado automáticamente por coincidencia estricta de nombre: ${ath.first_name} ${ath.last_name}`;
                         } else {
                             pendingCount++;
                         }
@@ -947,35 +960,55 @@ exports.getSummary = async (req, res) => {
             WHERE period = $1 AND status = 'PENDIENTE'
         `, [currentPeriod]);
 
-        // 6. Desglose por categoría (solo alumnos activos)
+        // 6. Desglose por categoría (solo alumnos activos, sin producto cartesiano)
         const categoryRes = await pool.query(`
+            WITH ath_movs AS (
+                SELECT 
+                    athlete_id,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept = 'MENSUALIDAD'), 0) as rec_mensualidad,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO'), 0) as rec_extras,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept != 'ANULADO'), 0) as rec_total
+                FROM bank_movements
+                WHERE period = $1 AND status = 'CONCILIADO'
+                GROUP BY athlete_id
+            )
             SELECT 
                 a.category,
                 COUNT(a.id) as total_alumnos,
-                COALESCE(SUM(a.monthly_fee) FILTER (WHERE a.fee_type != 'BECADO'), 0) as esperado,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept = 'MENSUALIDAD'), 0) as recaudado_mensualidad,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'MENSUALIDAD' AND m.category_concept != 'ANULADO'), 0) as recaudado_extras,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'ANULADO'), 0) as recaudado_total,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'ANULADO'), 0) as recaudado
+                COALESCE(SUM(a.monthly_fee) FILTER (WHERE a.fee_type != 'BECADO' AND a.fee_type != 'BECA_COMPLETA'), 0) as esperado,
+                COALESCE(SUM(m.rec_mensualidad), 0) as recaudado_mensualidad,
+                COALESCE(SUM(m.rec_extras), 0) as recaudado_extras,
+                COALESCE(SUM(m.rec_total), 0) as recaudado_total,
+                COALESCE(SUM(m.rec_total), 0) as recaudado
             FROM athletes a
-            LEFT JOIN bank_movements m ON a.id = m.athlete_id AND m.period = $1 AND m.status = 'CONCILIADO'
+            LEFT JOIN ath_movs m ON a.id = m.athlete_id
             WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
             GROUP BY a.category
             ORDER BY a.category ASC
         `, [currentPeriod]);
 
-        // 7. Desglose por agrupación (Equipos Bayes - solo alumnos activos)
+        // 7. Desglose por agrupación (Equipos Bayes - solo alumnos activos, sin producto cartesiano)
         const agrupacionesRes = await pool.query(`
+            WITH ath_movs AS (
+                SELECT 
+                    athlete_id,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept = 'MENSUALIDAD'), 0) as rec_mensualidad,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO'), 0) as rec_extras,
+                    COALESCE(SUM(amount) FILTER (WHERE category_concept != 'ANULADO'), 0) as rec_total
+                FROM bank_movements
+                WHERE period = $1 AND status = 'CONCILIADO'
+                GROUP BY athlete_id
+            )
             SELECT 
                 COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación') as agrupacion,
                 COUNT(a.id) as total_alumnos,
                 COALESCE(SUM(a.monthly_fee) FILTER (WHERE a.fee_type != 'BECADO' AND a.fee_type != 'BECA_COMPLETA'), 0) as esperado,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept = 'MENSUALIDAD'), 0) as recaudado_mensualidad,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'MENSUALIDAD' AND m.category_concept != 'ANULADO'), 0) as recaudado_extras,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'ANULADO'), 0) as recaudado_total,
-                COALESCE(SUM(m.amount) FILTER (WHERE m.category_concept != 'ANULADO'), 0) as recaudado
+                COALESCE(SUM(m.rec_mensualidad), 0) as recaudado_mensualidad,
+                COALESCE(SUM(m.rec_extras), 0) as recaudado_extras,
+                COALESCE(SUM(m.rec_total), 0) as recaudado_total,
+                COALESCE(SUM(m.rec_total), 0) as recaudado
             FROM athletes a
-            LEFT JOIN bank_movements m ON a.id = m.athlete_id AND m.period = $1 AND m.status = 'CONCILIADO'
+            LEFT JOIN ath_movs m ON a.id = m.athlete_id
             WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
             GROUP BY COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación')
             ORDER BY agrupacion ASC
@@ -1605,5 +1638,240 @@ exports.importBayesData = async (req, res) => {
     } catch (err) {
         console.error('Error al importar datos de Bayes:', err);
         res.status(500).json({ error: 'Error al importar datos de Bayes', details: err.message });
+    }
+};
+
+// ── ACTUALIZADOR / SINCRONIZADOR DE DEPORTISTAS DESDE EXCEL ──
+exports.syncAthletesExcel = async (req, res) => {
+    try {
+        const { items, preview_only } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ error: 'No se enviaron datos de deportistas' });
+        }
+
+        // Cargar todos los deportistas existentes en base de datos
+        const dbAthletesRes = await pool.query(`
+            SELECT id, first_name, last_name, rut, category, agrupacion, fee_type, monthly_fee, 
+                   phone, apoderado_phone, join_date, email, status
+            FROM athletes
+        `);
+        const dbAthletes = dbAthletesRes.rows;
+
+        function normalizeName(str) {
+            return (str || '').toLowerCase()
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+                .replace(/[^a-z0-9\s]/g, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+        }
+
+        function cleanRut(r) {
+            if (!r) return '';
+            return String(r).replace(/[^0-9kK]/g, '').toUpperCase();
+        }
+
+        function cleanPhone(p) {
+            if (!p) return null;
+            let s = String(p).replace(/[^0-9]/g, '');
+            if (s.startsWith('569') && s.length === 11) s = s.slice(2);
+            else if (s.startsWith('56') && s.length === 10) s = s.slice(2);
+            if (s.length === 8) s = '9' + s;
+            return s.length >= 8 ? s : null;
+        }
+
+        function cleanAgrupacion(agrup) {
+            if (!agrup) return '';
+            const parts = agrup.split('/').map(s => s.trim());
+            const cleanParts = parts.filter(p => !p.match(/^PF\b/i) && !p.match(/\bPF\b/i) && p.length > 0);
+            const unique = Array.from(new Set(cleanParts));
+            return unique.join(' / ') || agrup;
+        }
+
+        function excelDateToJS(serial) {
+            if (!serial) return null;
+            if (typeof serial === 'string' && serial.includes('-')) return serial;
+            const num = Number(serial);
+            if (isNaN(num)) return null;
+            const utc_days = Math.floor(num - 25569);
+            const utc_value = utc_days * 86400;
+            const date_info = new Date(utc_value * 1000);
+            return date_info.toISOString().split('T')[0];
+        }
+
+        const nuevos = [];
+        const actualizados = [];
+        const sin_cambios = [];
+
+        for (const raw of items) {
+            const rawRut = cleanRut(raw.rut || raw['RUT Deportista'] || raw.RUT);
+            let fName = (raw.first_name || raw['Ambos nombres deportista'] || raw.nombres || raw.nombre || '').trim();
+            let lName = (raw.last_name || raw['Apellidos Deportista'] || raw.apellidos || raw.apellido || '').trim();
+
+            if (!lName && fName) {
+                const parts = fName.split(/\s+/);
+                if (parts.length >= 3) {
+                    fName = parts.slice(0, -2).join(' ');
+                    lName = parts.slice(-2).join(' ');
+                } else if (parts.length === 2) {
+                    fName = parts[0];
+                    lName = parts[1];
+                }
+            }
+
+            const fullNameNorm = normalizeName(fName + ' ' + lName);
+            if (!fullNameNorm && !rawRut) continue;
+
+            const depPhone = cleanPhone(raw.phone || raw['Teléfono deportista'] || raw.telefono);
+            const papaPhone = cleanPhone(raw['Telefóno apoderado (papá)'] || raw['Telefono Papa']);
+            const mamaPhone = cleanPhone(raw['Teléfono Apoderada (Mamá)'] || raw['Telefono Mama']);
+            const apodPhone = cleanPhone(raw.apoderado_phone || raw['Telefono Apoderado']) || papaPhone || mamaPhone || null;
+
+            let cat = (raw.category || raw['Categoría a la que ingresa'] || raw.categoria || '').trim();
+            let agrup = cleanAgrupacion(raw.agrupacion || raw.agrupacion_equipo || cat);
+            if (!cat && agrup) cat = agrup.split('/')[0].trim();
+            if (!agrup && cat) agrup = cat;
+
+            let fee = parseFloat(raw.monthly_fee || raw.arancel || raw.cuota);
+            let feeType = raw.fee_type || 'REGULAR';
+            if (!fee || isNaN(fee)) {
+                const lowerCat = (cat + ' ' + agrup).toLowerCase();
+                if (lowerCat.includes('mini')) {
+                    fee = 36000;
+                    feeType = 'MINIVOLEY';
+                } else if (lowerCat.includes('tc') || lowerCat.includes('adulta')) {
+                    fee = 35000;
+                    feeType = 'ADULTO';
+                } else if (lowerCat.includes('master')) {
+                    fee = 36000;
+                    feeType = 'MASTER';
+                } else {
+                    fee = 50000;
+                    feeType = 'REGULAR';
+                }
+            }
+
+            const email = (raw.email || raw['Correo'] || raw['Email'] || '').trim();
+            const joinDate = excelDateToJS(raw.join_date || raw['Fecha de ingreso al club']) || (typeof raw.join_date === 'string' ? raw.join_date : null);
+
+            let matched = null;
+            if (rawRut && rawRut.length >= 7) {
+                matched = dbAthletes.find(a => cleanRut(a.rut) === rawRut || cleanRut(a.rut).slice(0, 7) === rawRut.slice(0, 7));
+            }
+            if (!matched && fullNameNorm.length >= 5) {
+                matched = dbAthletes.find(a => {
+                    const dbNorm = normalizeName((a.first_name || '') + ' ' + (a.last_name || ''));
+                    return dbNorm === fullNameNorm || (dbNorm.includes(fullNameNorm) && fullNameNorm.length > 8) || (fullNameNorm.includes(dbNorm) && dbNorm.length > 8);
+                });
+            }
+
+            if (matched) {
+                const changes = {};
+                if (apodPhone && matched.apoderado_phone !== apodPhone) changes.apoderado_phone = apodPhone;
+                if (depPhone && !matched.phone) changes.phone = depPhone;
+                if (email && !matched.email) changes.email = email;
+                if (joinDate && !matched.join_date) changes.join_date = joinDate;
+                if (agrup && agrup !== matched.agrupacion && !matched.agrupacion) changes.agrupacion = agrup;
+
+                if (Object.keys(changes).length > 0) {
+                    actualizados.push({
+                        id: matched.id,
+                        name: `${matched.first_name} ${matched.last_name}`,
+                        rut: matched.rut || rawRut,
+                        current: {
+                            phone: matched.phone,
+                            apoderado_phone: matched.apoderado_phone,
+                            agrupacion: matched.agrupacion,
+                            join_date: matched.join_date
+                        },
+                        changes: changes
+                    });
+                } else {
+                    sin_cambios.push({ id: matched.id, name: `${matched.first_name} ${matched.last_name}` });
+                }
+            } else {
+                nuevos.push({
+                    first_name: fName,
+                    last_name: lName,
+                    rut: rawRut,
+                    category: cat || 'Sin Categoría',
+                    agrupacion: agrup || 'Sin Agrupación',
+                    fee_type: feeType,
+                    monthly_fee: fee,
+                    phone: depPhone || apodPhone || '',
+                    apoderado_phone: apodPhone || '',
+                    join_date: joinDate || new Date().toISOString().slice(0, 10),
+                    email: email || '',
+                    status: 'ACTIVO'
+                });
+            }
+        }
+
+        if (preview_only) {
+            return res.json({
+                preview: true,
+                total_procesados: items.length,
+                nuevos_count: nuevos.length,
+                actualizados_count: actualizados.length,
+                sin_cambios_count: sin_cambios.length,
+                nuevos: nuevos,
+                actualizados: actualizados
+            });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            let insertadosCount = 0;
+            let actualizadosCount = 0;
+
+            for (const n of nuevos) {
+                const insRes = await client.query(`
+                    INSERT INTO athletes (first_name, last_name, rut, category, agrupacion, fee_type, monthly_fee, phone, apoderado_phone, join_date, email, status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    RETURNING id
+                `, [n.first_name, n.last_name, n.rut, n.category, n.agrupacion, n.fee_type, n.monthly_fee, n.phone, n.apoderado_phone, n.join_date, n.email, n.status]);
+                
+                if (n.rut) {
+                    await client.query(`
+                        INSERT INTO athlete_payer_ruts (athlete_id, payer_rut, payer_name, relationship)
+                        VALUES ($1, $2, $3, 'Deportista')
+                        ON CONFLICT DO NOTHING
+                    `, [insRes.rows[0].id, n.rut, `${n.first_name} ${n.last_name}`]);
+                }
+                insertadosCount++;
+            }
+
+            for (const a of actualizados) {
+                const fields = [];
+                const vals = [];
+                let idx = 1;
+                for (const [k, v] of Object.entries(a.changes)) {
+                    fields.push(`${k} = $${idx++}`);
+                    vals.push(v);
+                }
+                vals.push(a.id);
+                await client.query(`
+                    UPDATE athletes SET ${fields.join(', ')} WHERE id = $${idx}
+                `, vals);
+                actualizadosCount++;
+            }
+
+            await client.query('COMMIT');
+
+            res.json({
+                success: true,
+                message: `Sincronización completada: ${insertadosCount} nuevos deportistas incorporados, ${actualizadosCount} actualizados.`,
+                insertados_count: insertadosCount,
+                actualizados_count: actualizadosCount
+            });
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+    } catch (err) {
+        console.error('Error al sincronizar deportistas:', err);
+        res.status(500).json({ error: 'Error al sincronizar deportistas desde Excel', details: err.message });
     }
 };
