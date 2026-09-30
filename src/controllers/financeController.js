@@ -194,33 +194,41 @@ exports.getAthletes = async (req, res) => {
                 debt_semaforo = 'AL_DIA';
                 unpaid_months = 0;
             } else {
-                if (paid > 0) payment_status = 'PARCIAL';
-                unpaid_months = 1;
+                // Formato ISO para join_date (fallback a enero 2026 para deportistas preexistentes)
+                const athleteJoinDate = row.join_date ? new Date(row.join_date).toISOString().slice(0, 10) : '2026-01-01';
+                const curPDate = periodDates[currentPeriod] || '2026-09-01';
 
-                // Formato ISO para join_date
-                const athleteJoinDate = row.join_date ? new Date(row.join_date).toISOString().slice(0, 10) : '2026-09-01';
+                // Si el alumno ingresó en un periodo futuro al actual (ej: ingresó en Octubre y estamos viendo Septiembre)
+                if (athleteJoinDate.slice(0, 7) > curPDate.slice(0, 7)) {
+                    payment_status = 'NO_INGRESADO';
+                    debt_semaforo = 'AL_DIA';
+                    unpaid_months = 0;
+                } else {
+                    if (paid > 0) payment_status = 'PARCIAL';
+                    unpaid_months = 1;
 
-                // Revisar meses previos consecutivos impagos SOLO si el alumno ya pertenecía al club en ese periodo
-                for (let i = curIdx - 1; i >= 0; i--) {
-                    const prevP = orderedPeriods[i];
-                    const prevPDate = periodDates[prevP];
-                    
-                    // Si el periodo previo es anterior a la fecha de ingreso del deportista, NO genera deuda
-                    if (prevPDate < athleteJoinDate) {
-                        break;
+                    // Revisar meses previos consecutivos impagos SOLO si el alumno ya pertenecía al club en ese periodo
+                    for (let i = curIdx - 1; i >= 0; i--) {
+                        const prevP = orderedPeriods[i];
+                        const prevPDate = periodDates[prevP];
+                        
+                        // Si el periodo previo es anterior al mes de ingreso del deportista, NO genera deuda
+                        if (prevPDate.slice(0, 7) < athleteJoinDate.slice(0, 7)) {
+                            break;
+                        }
+
+                        const prevPaid = historyMap[`${row.id}_${prevP}`] || 0;
+                        if (prevPaid < fee) {
+                            unpaid_months++;
+                        } else {
+                            break;
+                        }
                     }
 
-                    const prevPaid = historyMap[`${row.id}_${prevP}`] || 0;
-                    if (prevPaid < fee) {
-                        unpaid_months++;
-                    } else {
-                        break;
-                    }
+                    if (unpaid_months === 1) debt_semaforo = 'AMARILLO';
+                    else if (unpaid_months === 2) debt_semaforo = 'NARANJA';
+                    else debt_semaforo = 'ROJO';
                 }
-
-                if (unpaid_months === 1) debt_semaforo = 'AMARILLO';
-                else if (unpaid_months === 2) debt_semaforo = 'NARANJA';
-                else debt_semaforo = 'ROJO';
             }
 
             return {
@@ -233,8 +241,8 @@ exports.getAthletes = async (req, res) => {
                 debt_semaforo,
                 unpaid_months,
                 extras_paid: extras,
-                debt_amount: isInactive ? 0 : Math.max(0, fee - paid),
-                debt_total_accumulated: isInactive ? 0 : (unpaid_months > 0 ? (unpaid_months * fee - (paid > 0 && paid < fee ? paid : 0)) : 0)
+                debt_amount: (isInactive || payment_status === 'NO_INGRESADO') ? 0 : Math.max(0, fee - paid),
+                debt_total_accumulated: (isInactive || payment_status === 'NO_INGRESADO') ? 0 : (unpaid_months > 0 ? (unpaid_months * fee - (paid > 0 && paid < fee ? paid : 0)) : 0)
             };
         });
 
@@ -1971,3 +1979,86 @@ exports.adjustU11AndMiniCategories = async (req, res) => {
         client.release();
     }
 };
+
+// 30. Ejecutar migración y auditoría profunda de conceptos bancarios y fechas de ingreso
+exports.migrateMovementsAndJoinDates = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        let payload = req.body;
+        if (!payload || !payload.movements || !payload.movements.length) {
+            try {
+                payload = require('../data/migration_payload.json');
+            } catch (e) {
+                payload = { movements: [], athletes: [] };
+            }
+        }
+
+        const movements = payload.movements || [];
+        const athletes = payload.athletes || [];
+
+        let movementsUpdated = 0;
+        for (const m of movements) {
+            const upd = await client.query(
+                `UPDATE bank_movements SET category_concept = $1 WHERE id = $2 RETURNING id`,
+                [m.concept, m.id]
+            );
+            if (upd.rowCount > 0) movementsUpdated += upd.rowCount;
+        }
+
+        let athletesUpdated = 0;
+        for (const a of athletes) {
+            const upd = await client.query(
+                `UPDATE athletes SET join_date = $1 WHERE id = $2 RETURNING id`,
+                [a.join_date, a.id]
+            );
+            if (upd.rowCount > 0) athletesUpdated += upd.rowCount;
+        }
+
+        // Casos explícitos y seguros
+        // Maite Cano (id 146):
+        await client.query(`
+            UPDATE bank_movements 
+            SET category_concept = 'CAMPEONATO' 
+            WHERE athlete_id = 146 AND id IN (53, 72, 220, 282, 874, 971, 973, 1126, 1181, 339, 702, 714)
+        `);
+        await client.query(`
+            UPDATE bank_movements 
+            SET category_concept = 'ROPA' 
+            WHERE athlete_id = 146 AND id IN (1069, 621)
+        `);
+        await client.query(`
+            UPDATE bank_movements 
+            SET category_concept = 'TALLERES' 
+            WHERE athlete_id = 146 AND id = 624
+        `);
+
+        // Alumnos con deuda previa documentada
+        await client.query(`UPDATE athletes SET join_date = '2026-07-01' WHERE id = 79`); // Francisca Perez Webar
+        await client.query(`UPDATE athletes SET join_date = '2026-05-01' WHERE id = 70`); // Fernanda Maier
+        await client.query(`UPDATE athletes SET join_date = '2026-05-01' WHERE id = 249`); // Wilton Díaz
+        await client.query(`UPDATE athletes SET join_date = '2026-06-01' WHERE id = 34`); // Carolina Fuentes
+        await client.query(`UPDATE athletes SET join_date = '2026-06-01' WHERE id = 35`); // Catalina Barrientos
+        await client.query(`UPDATE athletes SET join_date = '2026-05-01' WHERE id = 119`); // Juan Jose Barria
+        await client.query(`UPDATE athletes SET join_date = '2026-05-01' WHERE id = 120`); // Julian Carrasco
+        await client.query(`UPDATE athletes SET join_date = '2026-06-01' WHERE id = 246`); // Vicente Navarro
+        await client.query(`UPDATE athletes SET join_date = '2026-07-01' WHERE id = 221`); // Sofia Chavez
+
+        await client.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: 'Migración y auditoría de conceptos y fechas ejecutada con éxito',
+            movements_updated: movementsUpdated,
+            athletes_updated: athletesUpdated
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error en migración:', err);
+        res.status(500).json({ error: 'Error al ejecutar migración', details: err.message });
+    } finally {
+        client.release();
+    }
+};
+

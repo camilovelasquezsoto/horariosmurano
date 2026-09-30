@@ -1175,6 +1175,8 @@ function resetAthletesFilters() {
     if (semaforoSel) semaforoSel.value = 'TODOS';
     const feeSel = document.getElementById('f-fee-filter');
     if (feeSel) feeSel.value = 'TODOS';
+    const sortSel = document.getElementById('f-athletes-sort');
+    if (sortSel) sortSel.value = 'DEFAULT';
 
     currentFinanceStatusFilter = 'TODOS';
     document.querySelectorAll('.f-status-pills .f-pill').forEach(p => {
@@ -1195,6 +1197,7 @@ function filterAthletesTable() {
     const agrupacion = document.getElementById('f-agrupacion-filter')?.value || 'TODAS';
     const semaforo = document.getElementById('f-semaforo-filter')?.value || 'TODOS';
     const fee = document.getElementById('f-fee-filter')?.value || 'TODOS';
+    const sortVal = document.getElementById('f-athletes-sort')?.value || 'DEFAULT';
 
     filteredAthletesCache = allFinanceAthletes.filter(a => {
         // Filtro Categoría (Edad)
@@ -1253,6 +1256,35 @@ function filterAthletesTable() {
 
         return true;
     });
+
+    // Ordenamiento complementario
+    if (sortVal === 'DEBT_DESC') {
+        filteredAthletesCache.sort((a, b) => {
+            const debtA = parseFloat(a.debt_total_accumulated || a.debt_amount || 0);
+            const debtB = parseFloat(b.debt_total_accumulated || b.debt_amount || 0);
+            if (debtB !== debtA) return debtB - debtA;
+            return (b.unpaid_months || 0) - (a.unpaid_months || 0);
+        });
+    } else if (sortVal === 'DEBT_ASC') {
+        filteredAthletesCache.sort((a, b) => {
+            const debtA = parseFloat(a.debt_total_accumulated || a.debt_amount || 0);
+            const debtB = parseFloat(b.debt_total_accumulated || b.debt_amount || 0);
+            if (debtA !== debtB) return debtA - debtB;
+            return (a.unpaid_months || 0) - (b.unpaid_months || 0);
+        });
+    } else if (sortVal === 'NAME_ASC') {
+        filteredAthletesCache.sort((a, b) => (a.last_name || '').localeCompare(b.last_name || ''));
+    } else if (sortVal === 'NAME_DESC') {
+        filteredAthletesCache.sort((a, b) => (b.last_name || '').localeCompare(a.last_name || ''));
+    } else if (sortVal === 'FEE_DESC') {
+        filteredAthletesCache.sort((a, b) => parseFloat(b.monthly_fee || 0) - parseFloat(a.monthly_fee || 0));
+    } else if (sortVal === 'FEE_ASC') {
+        filteredAthletesCache.sort((a, b) => parseFloat(a.monthly_fee || 0) - parseFloat(b.monthly_fee || 0));
+    } else if (sortVal === 'JOIN_DESC') {
+        filteredAthletesCache.sort((a, b) => (b.join_date || '').localeCompare(a.join_date || ''));
+    } else if (sortVal === 'JOIN_ASC') {
+        filteredAthletesCache.sort((a, b) => (a.join_date || '').localeCompare(b.join_date || ''));
+    }
 
     const statsEl = document.getElementById('f-athletes-count-stats');
     if (statsEl) {
@@ -1419,6 +1451,20 @@ function filterPendingTable() {
         statsEl.textContent = `Mostrando ${filteredPendingCache.length} de ${allFinancePendingMovements.length} transferencias`;
     }
 
+    // Ordenamiento complementario
+    const sortVal = document.getElementById('f-pending-sort')?.value || 'DATE_DESC';
+    if (sortVal === 'DATE_DESC') {
+        filteredPendingCache.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id));
+    } else if (sortVal === 'DATE_ASC') {
+        filteredPendingCache.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id - b.id));
+    } else if (sortVal === 'AMOUNT_DESC') {
+        filteredPendingCache.sort((a, b) => parseFloat(b.amount || 0) - parseFloat(a.amount || 0));
+    } else if (sortVal === 'AMOUNT_ASC') {
+        filteredPendingCache.sort((a, b) => parseFloat(a.amount || 0) - parseFloat(b.amount || 0));
+    } else if (sortVal === 'PAYER_ASC') {
+        filteredPendingCache.sort((a, b) => (a.payer_name || '').localeCompare(b.payer_name || ''));
+    }
+
     renderPendingPage();
 }
 
@@ -1464,6 +1510,8 @@ function resetPendingFilters() {
     if (conceptSel) conceptSel.value = 'TODOS';
     const amountSel = document.getElementById('f-pending-amount-filter');
     if (amountSel) amountSel.value = 'TODOS';
+    const sortSel = document.getElementById('f-pending-sort');
+    if (sortSel) sortSel.value = 'DATE_DESC';
     filterPendingTable();
 }
 
@@ -1833,6 +1881,20 @@ function filterExtrasTable() {
     const statsEl = document.getElementById('f-extras-count-stats');
     if (statsEl) {
         statsEl.textContent = `Mostrando ${filteredExtrasCache.length} de ${allFinanceExtrasMovements.length} pagos extras`;
+    }
+
+    // Ordenamiento complementario
+    const sortVal = document.getElementById('f-extras-sort')?.value || 'DATE_DESC';
+    if (sortVal === 'DATE_DESC') {
+        filteredExtrasCache.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id - a.id));
+    } else if (sortVal === 'DATE_ASC') {
+        filteredExtrasCache.sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.id - b.id));
+    } else if (sortVal === 'AMOUNT_DESC') {
+        filteredExtrasCache.sort((a, b) => parseFloat(b.amount || 0) - parseFloat(a.amount || 0));
+    } else if (sortVal === 'AMOUNT_ASC') {
+        filteredExtrasCache.sort((a, b) => parseFloat(a.amount || 0) - parseFloat(b.amount || 0));
+    } else if (sortVal === 'ATHLETE_ASC') {
+        filteredExtrasCache.sort((a, b) => (a.athlete_name || a.payer_name || '').localeCompare(b.athlete_name || b.payer_name || ''));
     }
 
     renderExtrasPage();

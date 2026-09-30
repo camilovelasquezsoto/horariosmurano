@@ -236,6 +236,18 @@
                     <option value="BECADO">Becado ($0)</option>
                 </select>
 
+                <select id="f-athletes-sort" class="f-select" onchange="filterAthletesTable()" style="max-width:175px;">
+                    <option value="DEFAULT">↕️ Orden por Defecto</option>
+                    <option value="DEBT_DESC">🔴 Mayor Deuda a Menor</option>
+                    <option value="DEBT_ASC">🟢 Menor Deuda a Mayor</option>
+                    <option value="NAME_ASC">🔤 Nombre: A - Z</option>
+                    <option value="NAME_DESC">🔤 Nombre: Z - A</option>
+                    <option value="FEE_DESC">💰 Cuota: Mayor a Menor</option>
+                    <option value="FEE_ASC">💰 Cuota: Menor a Mayor</option>
+                    <option value="JOIN_DESC">📅 Ingreso: Más reciente</option>
+                    <option value="JOIN_ASC">📅 Ingreso: Más antiguo</option>
+                </select>
+
                 <button class="btn-action-sm" onclick="resetAthletesFilters()" title="Restablecer filtros" style="padding:6px 10px;">↺ Limpiar</button>
 
                 <div style="display:flex; gap:8px; margin-left:auto; align-items:center; flex-wrap:wrap;">
@@ -326,6 +338,15 @@
                     <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
                     <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
                 </select>
+
+                <select id="f-extras-sort" class="f-select" onchange="filterExtrasTable()" style="max-width:180px;">
+                    <option value="DATE_DESC">📅 Más Reciente Primero</option>
+                    <option value="DATE_ASC">📅 Más Antigua Primero</option>
+                    <option value="AMOUNT_DESC">💵 Mayor Monto</option>
+                    <option value="AMOUNT_ASC">💵 Menor Monto</option>
+                    <option value="ATHLETE_ASC">🔤 Alumno: A - Z</option>
+                </select>
+
                 <div class="f-status-pills" style="margin-left:auto; display:flex; gap:6px; flex-wrap:wrap;">
                     <button class="f-pill active" data-assigned="TODOS" onclick="setExtrasAssignedFilter('TODOS', this)">Todos</button>
                     <button class="f-pill" data-assigned="POR_DEFINIR" onclick="setExtrasAssignedFilter('POR_DEFINIR', this)" style="border-color:#ffab00; color:#ffab00;">⚡ Por Definir</button>
@@ -412,6 +433,14 @@
                     <option value="EXACT_35">Exacto $35.000 (Adulta)</option>
                     <option value="ABOVE_50">Mayor a $50.000 (Posibles Hermanos / Sumas)</option>
                     <option value="BELOW_35">Menor a $35.000</option>
+                </select>
+
+                <select id="f-pending-sort" class="f-select" onchange="filterPendingTable()" style="max-width:180px;">
+                    <option value="DATE_DESC">📅 Más Reciente Primero</option>
+                    <option value="DATE_ASC">📅 Más Antigua Primero</option>
+                    <option value="AMOUNT_DESC">💵 Mayor Monto</option>
+                    <option value="AMOUNT_ASC">💵 Menor Monto</option>
+                    <option value="PAYER_ASC">🔤 Pagador: A - Z</option>
                 </select>
 
                 <button class="btn-action-sm" onclick="resetPendingFilters()" title="Restablecer filtros">↺ Limpiar</button>
@@ -1423,6 +1452,6 @@
 
 <!-- Lógica Modularizada -->
 <script>document.getElementById('current-year').textContent = new Date().getFullYear();</script>
-<script src="script.js?v=2.7"></script>
+<script src="script.js?v=2.8"></script>
 </body>
 </html>
