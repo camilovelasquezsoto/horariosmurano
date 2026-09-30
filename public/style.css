@@ -1608,6 +1608,11 @@ footer::before {
     overflow-y: auto;
 }
 
+#f-athlete-modal .f-modal {
+    max-width: 880px;
+    width: 95%;
+}
+
 .f-modal-header {
     display: flex;
     justify-content: space-between;

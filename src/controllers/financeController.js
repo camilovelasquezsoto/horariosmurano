@@ -626,6 +626,7 @@ exports.processCartola = async (req, res) => {
             else if (cLow.includes('cancha')) categoryConcept = 'ARRIENDO_CANCHA';
             else if (cLow.includes('visita') && (cLow.includes('camp') || cLow.includes('torneo'))) categoryConcept = 'INSCRIPCION_CAMPEONATO_VISITA';
             else if (cLow.includes('local') && (cLow.includes('camp') || cLow.includes('torneo'))) categoryConcept = 'PAGO_CAMPEONATO_LOCAL';
+            else if (cLow.includes('camp') || cLow.includes('torneo') || cLow.includes('campeonato')) categoryConcept = 'CAMPEONATO';
             else if (cLow.includes('matr')) categoryConcept = 'MATRICULA';
             else if (cLow.includes('ropa') || cLow.includes('polera') || cLow.includes('indumentaria') || cLow.includes('short')) categoryConcept = 'ROPA';
             else if (cLow.includes('taller') || cLow.includes('clinica')) categoryConcept = 'TALLERES';
@@ -1873,5 +1874,100 @@ exports.syncAthletesExcel = async (req, res) => {
     } catch (err) {
         console.error('Error al sincronizar deportistas:', err);
         res.status(500).json({ error: 'Error al sincronizar deportistas desde Excel', details: err.message });
+    }
+};
+
+// 25. Ajuste integral de categorías U11 a U12 y cuotas de minivoley
+exports.adjustU11AndMiniCategories = async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // 1. Actualizar U11 Damas F a U12 Damas F con arancel REGULAR de $50.000
+        const u11FRes = await client.query(`
+            UPDATE athletes 
+            SET category = 'U12 Damas F', fee_type = 'REGULAR', monthly_fee = 50000.00 
+            WHERE category = 'U11 Damas F'
+            RETURNING id
+        `);
+
+        // 2. Actualizar U11 masculino M a U12 Varones M con arancel REGULAR de $50.000
+        const u11MRes = await client.query(`
+            UPDATE athletes 
+            SET category = 'U12 Varones M', fee_type = 'REGULAR', monthly_fee = 50000.00 
+            WHERE category = 'U11 masculino M'
+            RETURNING id
+        `);
+
+        // 3. Anastasia Toledo (id 18): nacida 2015 (11 años), gemela de Josefina, va a U12 Damas F, U12 G1 Damas, $50.000
+        await client.query(`
+            UPDATE athletes 
+            SET category = 'U12 Damas F', agrupacion = 'U12 G1 Damas', fee_type = 'REGULAR', monthly_fee = 50000.00 
+            WHERE id = 18
+        `);
+
+        // 4. Isabella Aguilera (id 100): nacida 2013 (13 años), va a U13 Damas F, $50.000
+        await client.query(`
+            UPDATE athletes 
+            SET category = 'U13 Damas F', fee_type = 'REGULAR', monthly_fee = 50000.00 
+            WHERE id = 100
+        `);
+
+        // 5. Josefa Antonia Uribe Gallardo (id 251): nacida 2012 (14 años), va a U14 Damas F, $50.000
+        await client.query(`
+            UPDATE athletes 
+            SET category = 'U14 Damas F', fee_type = 'REGULAR', monthly_fee = 50000.00 
+            WHERE id = 251
+        `);
+
+        // 6. María Valentina Ulloa Ulloa (id 252): nacida 2009 (17 años), va a U17 Damas F, $50.000
+        await client.query(`
+            UPDATE athletes 
+            SET category = 'U17 Damas F', fee_type = 'REGULAR', monthly_fee = 50000.00 
+            WHERE id = 252
+        `);
+
+        // 7. Unificar nombre 'Minivoley' a 'Mini Voley'
+        await client.query(`
+            UPDATE athletes 
+            SET category = 'Mini Voley' 
+            WHERE category = 'Minivoley'
+        `);
+
+        // 8. Corregir pagos bancarios pendientes que tenían concepto MENSUALIDAD por defecto sin deportista
+        const movsRes = await client.query(`
+            UPDATE bank_movements 
+            SET category_concept = 'POR_DEFINIR' 
+            WHERE status = 'PENDIENTE' AND athlete_id IS NULL AND category_concept = 'MENSUALIDAD'
+            RETURNING id
+        `);
+
+        // 9. Reclasificar pagos obvios de campeonato (ej. Club Volley Valdivia 140.000 y pagos de 140.000)
+        await client.query(`
+            UPDATE bank_movements
+            SET category_concept = 'INSCRIPCION_CAMPEONATO_VISITA'
+            WHERE (payer_name ILIKE '%VOLLEY VALDIVIA%' OR notes ILIKE '%VOLLEY VALDIVIA%') AND status = 'PENDIENTE'
+        `);
+        await client.query(`
+            UPDATE bank_movements
+            SET category_concept = 'CAMPEONATO'
+            WHERE amount = 140000.00 AND status = 'PENDIENTE' AND category_concept = 'POR_DEFINIR'
+        `);
+
+        await client.query('COMMIT');
+
+        res.json({
+            success: true,
+            message: 'Categorías y cuotas ajustadas con éxito',
+            u11_damas_actualizadas: u11FRes.rowCount,
+            u11_varones_actualizados: u11MRes.rowCount,
+            movimientos_pendientes_reset: movsRes.rowCount
+        });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Error al ajustar categorías:', err);
+        res.status(500).json({ error: 'Error al ajustar categorías', details: err.message });
+    } finally {
+        client.release();
     }
 };

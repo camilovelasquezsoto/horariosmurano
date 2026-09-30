@@ -1477,7 +1477,10 @@ function renderPendingMovements(movements) {
     }
 
     tbody.innerHTML = movements.map(m => {
-        const selectedConcept = m.category_concept || 'MENSUALIDAD';
+        let selectedConcept = m.category_concept || 'POR_DEFINIR';
+        if (!m.athlete_id && (selectedConcept === 'MENSUALIDAD' || selectedConcept === 'EXTRA')) {
+            selectedConcept = 'POR_DEFINIR';
+        }
         const preAth = m.athlete_id ? allFinanceAthletes.find(a => a.id === m.athlete_id) : null;
         const hasPreAth = !!preAth;
         const preAthName = preAth ? `${preAth.full_name} (${preAth.category})` : '';
@@ -3036,28 +3039,34 @@ async function loadAthleteMovementsHistory(athleteId) {
         currentAthleteMovementsCache = movs || [];
         if (tbody) {
             if (!movs || movs.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:15px; color:var(--text-muted);">No hay transferencias registradas para este alumno.</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text-muted);">No hay transferencias registradas para este alumno.</td></tr>`;
             } else {
                 tbody.innerHTML = movs.map(m => {
                     const isAnulado = m.category_concept === 'ANULADO';
+                    const payerDesc = m.payer_name ? `<strong style="color:var(--text); font-size:0.83rem;">${escapeHtml(m.payer_name)}</strong>` : '<span style="color:var(--text-dim);">-</span>';
+                    const bankInfo = m.notes || m.bank_origin || '';
                     return `
                     <tr style="${isAnulado ? 'opacity:0.6;' : ''}">
-                        <td>${m.date || '-'}</td>
-                        <td><span class="cat-pill">${m.period || '-'}</span></td>
-                        <td><code>${m.formatted_rut || m.payer_rut || '-'}</code></td>
-                        <td>${getConceptBadgeHtml(m.category_concept)}</td>
-                        <td style="color:${isAnulado ? 'var(--text-muted)' : 'var(--success)'}; font-weight:700; ${isAnulado ? 'text-decoration:line-through;' : ''}">
+                        <td style="white-space:nowrap; font-size:0.82rem; color:var(--text-muted);">${m.date || '-'}</td>
+                        <td style="white-space:nowrap;"><span class="cat-pill">${m.period || '-'}</span></td>
+                        <td>
+                            ${payerDesc}
+                            ${bankInfo ? `<br><small style="color:var(--text-dim); font-size:0.73rem;">${escapeHtml(bankInfo)}</small>` : ''}
+                        </td>
+                        <td style="white-space:nowrap;"><code style="color:var(--accent-light); font-weight:700;">${m.formatted_rut || m.payer_rut || '-'}</code></td>
+                        <td style="white-space:nowrap;">${getConceptBadgeHtml(m.category_concept)}</td>
+                        <td style="white-space:nowrap; color:${isAnulado ? 'var(--text-muted)' : 'var(--success)'}; font-weight:700; font-size:0.92rem; ${isAnulado ? 'text-decoration:line-through;' : ''}">
                             ${formatCLP(m.amount)}
                         </td>
-                        <td style="text-align:center;">
-                            <button class="btn-action-sm" onclick="openEditMovementModal(${m.id})" style="font-size:0.75rem; padding:3px 8px;" title="Editar o reclasificar pago">✏️ Editar</button>
+                        <td style="text-align:center; white-space:nowrap;">
+                            <button class="btn-action-sm" onclick="openEditMovementModal(${m.id})" style="font-size:0.75rem; padding:4px 9px;" title="Editar o reclasificar pago">✏️ Editar</button>
                         </td>
                     </tr>
                 `}).join('');
             }
         }
     } catch (e) {
-        if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error cargando historial</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:var(--danger);">Error cargando historial</td></tr>`;
     }
 }
 
@@ -3425,10 +3434,35 @@ function exportDebtorsCSV() {
     const debtors = allFinanceAthletes.filter(a => a.debt_amount > 0 && a.fee_type !== 'BECADO' && a.fee_type !== 'BECA_COMPLETA' && a.status !== 'INACTIVO' && a.status !== 'RETIRADO');
     if (debtors.length === 0) return toast('No hay deudores en este período');
 
-    let csv = 'Alumno,Agrupacion,Telefono,Cuota Mensual,Pagado,Deuda,Estado,RUTs Asociados,Notas\n';
+    if (typeof XLSX !== 'undefined') {
+        const rows = debtors.map(d => ({
+            'Alumno': d.full_name,
+            'Categoría': d.category || '',
+            'Agrupación': d.agrupacion || 'Sin Agrupación',
+            'Teléfono Deportista': d.phone || '',
+            'Teléfono Apoderado': d.apoderado_phone || '',
+            'Cuota Mensual': parseFloat(d.monthly_fee) || 0,
+            'Monto Pagado': parseFloat(d.amount_paid) || 0,
+            'Deuda Período': parseFloat(d.debt_amount) || 0,
+            'Deuda Acumulada': parseFloat(d.debt_total_accumulated) || parseFloat(d.debt_amount) || 0,
+            'Meses Impagos': d.unpaid_months || 1,
+            'Semáforo': d.debt_semaforo || 'AMARILLO',
+            'RUTs Asociados': (d.formatted_ruts || []).map(r => r.formatted_rut).join(', '),
+            'Notas': d.notes || ''
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Deudores');
+        XLSX.writeFile(wb, `deudores_murano_${currentFinancePeriod}.xlsx`);
+        toast('📥 Planilla Excel de deudores descargada');
+        return;
+    }
+
+    let csv = 'Alumno,Categoria,Agrupacion,Telefono,Cuota Mensual,Pagado,Deuda,Estado,RUTs Asociados,Notas\n';
     debtors.forEach(d => {
         const ruts = (d.formatted_ruts || []).map(r => r.formatted_rut).join('; ');
-        csv += `"${d.full_name}","${d.agrupacion || ''}","${d.phone || ''}",${d.monthly_fee},${d.amount_paid},${d.debt_amount},"${d.debt_semaforo || ''}","${ruts}","${(d.notes || '').replace(/"/g, '""')}"\n`;
+        csv += `"${d.full_name}","${d.category || ''}","${d.agrupacion || ''}","${d.phone || ''}",${d.monthly_fee},${d.amount_paid},${d.debt_amount},"${d.debt_semaforo || ''}","${ruts}","${(d.notes || '').replace(/"/g, '""')}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -3440,6 +3474,53 @@ function exportDebtorsCSV() {
     link.click();
     document.body.removeChild(link);
     toast('📥 Planilla de deudores descargada');
+}
+
+function exportUpToDateExcel() {
+    const upToDate = allFinanceAthletes.filter(a => 
+        (a.payment_status === 'PAGADO' || a.debt_semaforo === 'AL_DIA' || a.fee_type === 'BECADO' || a.fee_type === 'BECA_COMPLETA') &&
+        a.status !== 'INACTIVO' && a.status !== 'RETIRADO'
+    );
+
+    if (upToDate.length === 0) return toast('No hay deportistas al día en este período');
+
+    if (typeof XLSX !== 'undefined') {
+        const rows = upToDate.map(d => ({
+            'Alumno': d.full_name,
+            'Categoría': d.category || '',
+            'Agrupación': d.agrupacion || 'Sin Agrupación',
+            'Teléfono': d.phone || '',
+            'Teléfono Apoderado': d.apoderado_phone || '',
+            'Cuota Mensual': parseFloat(d.monthly_fee) || 0,
+            'Monto Pagado': parseFloat(d.amount_paid) || 0,
+            'Pagos Extras': parseFloat(d.extras_paid) || 0,
+            'Estado': 'Al Día',
+            'RUTs Asociados': (d.formatted_ruts || []).map(r => r.formatted_rut).join(', '),
+            'Notas': d.notes || ''
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Alumnos Al Dia');
+        XLSX.writeFile(wb, `alumnos_al_dia_murano_${currentFinancePeriod}.xlsx`);
+        toast('📥 Planilla Excel de deportistas al día descargada exitosamente');
+        return;
+    }
+
+    let csv = 'Alumno,Categoria,Agrupacion,Telefono,Telefono Apoderado,Cuota Mensual,Monto Pagado,Pagos Extras,Estado,RUTs Asociados,Notas\n';
+    upToDate.forEach(d => {
+        const ruts = (d.formatted_ruts || []).map(r => r.formatted_rut).join('; ');
+        csv += `"${d.full_name}","${d.category || ''}","${d.agrupacion || ''}","${d.phone || ''}","${d.apoderado_phone || ''}",${d.monthly_fee},${d.amount_paid},${d.extras_paid || 0},"Al Día","${ruts}","${(d.notes || '').replace(/"/g, '""')}"\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `alumnos_al_dia_murano_${currentFinancePeriod}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast('📥 Planilla de deportistas al día descargada');
 }
 
 // ── COBRANZA PERSONALIZADA POR WHATSAPP ──

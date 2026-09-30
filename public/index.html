@@ -10,7 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
     
     <!-- Estilos Modularizados -->
-    <link rel="stylesheet" href="style.css?v=2.6">
+    <link rel="stylesheet" href="style.css?v=2.7">
     <!-- SheetJS para procesamiento ultrarrápido y seguro de cartolas Excel en el navegador -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -238,8 +238,9 @@
 
                 <button class="btn-action-sm" onclick="resetAthletesFilters()" title="Restablecer filtros" style="padding:6px 10px;">↺ Limpiar</button>
 
-                <div style="display:flex; gap:8px; margin-left:auto; align-items:center;">
-                    <button class="btn-action-sm" onclick="exportDebtorsCSV()" title="Descargar planilla de deudores">📑 Deudores CSV</button>
+                <div style="display:flex; gap:8px; margin-left:auto; align-items:center; flex-wrap:wrap;">
+                    <button class="btn-action-sm" onclick="exportUpToDateExcel()" title="Descargar planilla de alumnos al día en Excel" style="color:var(--success); font-weight:700; border-color:var(--success);">🟢 Al Día Excel</button>
+                    <button class="btn-action-sm" onclick="exportDebtorsCSV()" title="Descargar planilla de deudores en Excel" style="color:#ff5252; font-weight:700; border-color:#ff5252;">📑 Deudores Excel</button>
                     <button class="btn-action-sm" onclick="openSyncAthletesModal()" title="Sincronizar deportistas y apoderados desde Excel">📊 Actualizar Jugadores</button>
                     <button class="primary" onclick="openNewAthleteModal()" style="padding:6px 12px; font-size:0.82rem;">+ Nuevo Alumno</button>
                 </div>
@@ -776,12 +777,13 @@
 
                 <!-- Historial de Pagos -->
                 <h4 style="font-size:0.9rem; text-transform:uppercase; color:var(--text-muted); margin-bottom:8px;">Historial de Pagos y Transferencias</h4>
-                <div class="f-table-container" style="max-height:200px; overflow-y:auto; margin-bottom:18px;">
-                    <table class="f-table" style="font-size:0.82rem;">
+                <div class="f-table-container" style="max-height:340px; overflow-x:auto; overflow-y:auto; margin-bottom:18px;">
+                    <table class="f-table" style="font-size:0.82rem; min-width:680px; width:100%;">
                         <thead>
                             <tr>
                                 <th>Fecha</th>
                                 <th>Período</th>
+                                <th>Pagador / Banco</th>
                                 <th>RUT Pagador</th>
                                 <th>Concepto</th>
                                 <th>Monto</th>
@@ -789,7 +791,7 @@
                             </tr>
                         </thead>
                         <tbody id="modal-ath-payments-tbody">
-                            <tr><td colspan="6" style="text-align:center; padding:15px; color:var(--text-muted);">Sin pagos registrados.</td></tr>
+                            <tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text-muted);">Sin pagos registrados.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1421,6 +1423,6 @@
 
 <!-- Lógica Modularizada -->
 <script>document.getElementById('current-year').textContent = new Date().getFullYear();</script>
-<script src="script.js?v=2.6"></script>
+<script src="script.js?v=2.7"></script>
 </body>
 </html>

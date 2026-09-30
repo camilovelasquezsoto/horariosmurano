@@ -64,6 +64,7 @@ router.get('/favorites/:user_id', trainingController.getFavoritesByUser);
  */
 router.get('/finance/athletes', financeController.getAthletes);
 router.post('/finance/athletes', financeController.createAthlete);
+router.post('/finance/athletes/adjust-categories', financeController.adjustU11AndMiniCategories);
 router.put('/finance/athletes/:id', financeController.updateAthlete);
 router.delete('/finance/athletes/:id', financeController.deleteAthlete);
 
