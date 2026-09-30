@@ -2681,10 +2681,29 @@ async function executeCartolaReconciliation() {
 
 // ── MODAL: FICHA DEL ALUMNO ──
 
+function renderModalRuts(athlete) {
+    const listEl = document.getElementById('modal-ath-ruts-list');
+    if (!listEl) return;
+    const ruts = (athlete && (athlete.formatted_ruts || athlete.payer_ruts)) || [];
+    if (ruts.length === 0) {
+        listEl.innerHTML = '<span style="color:var(--text-muted); font-size:0.8rem;">Sin RUTs de apoderados vinculados aún.</span>';
+        return;
+    }
+    listEl.innerHTML = ruts.map(r => `
+        <span class="rut-chip" style="font-size:0.82rem; padding:4px 8px; display:inline-flex; align-items:center; gap:6px;">
+            <span>${r.formatted_rut || r.payer_rut} ${r.payer_name ? `(${r.payer_name})` : ''}</span>
+            <button onclick="removePayerRut(${r.id})" style="background:transparent; border:none; color:var(--danger); cursor:pointer; font-size:0.85rem; padding:0 2px;" title="Desvincular RUT">✕</button>
+        </span>
+    `).join('');
+}
+
 async function openAthleteModal(athleteId) {
     const athlete = allFinanceAthletes.find(a => a.id === athleteId);
     if (!athlete) return;
     currentActiveAthlete = athlete;
+
+    // Mostrar el modal inmediatamente
+    document.getElementById('f-athlete-modal')?.classList.remove('hidden');
 
     document.getElementById('modal-ath-name').textContent = athlete.full_name;
     document.getElementById('modal-ath-cat').textContent = athlete.category;
@@ -2787,8 +2806,6 @@ async function openAthleteModal(athleteId) {
     } catch (e) {
         if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--danger);">Error cargando historial</td></tr>`;
     }
-
-    document.getElementById('f-athlete-modal')?.classList.remove('hidden');
 }
 
 function closeAthleteModal() {
