@@ -927,7 +927,7 @@ function changeFinancePeriod() {
 }
 
 function switchFinanceTab(tabId) {
-    const tabs = ['athletes', 'extras', 'pending', 'cartola', 'categories', 'expenses'];
+    const tabs = ['athletes', 'extras', 'pending', 'cartola', 'categories', 'expenses', 'audit'];
     tabs.forEach(t => {
         const content = document.getElementById(`f-tab-${t}`);
         const btn = document.getElementById(`f-tab-btn-${t}`);
@@ -942,6 +942,8 @@ function switchFinanceTab(tabId) {
 
     if (tabId === 'expenses') {
         loadExpenses();
+    } else if (tabId === 'audit') {
+        loadAuditData();
     }
 }
 
@@ -970,12 +972,17 @@ async function loadFinanceData() {
 
             const elDeuda = document.getElementById('kpi-deuda-mensualidades');
             if (elDeuda) {
-                const deuda = Math.max(0, summary.esperado - summary.total_mensualidades);
+                const deuda = Math.max(0, (summary.esperado || 0) - (summary.total_mensualidades || 0));
                 elDeuda.textContent = `Deuda mensualidades: ${formatCLP(deuda)}`;
             }
 
             const elPagaron = document.getElementById('kpi-alumnos-pagaron');
-            if (elPagaron) elPagaron.textContent = `${summary.alumnos_pagaron} de ${summary.total_activos} alumnos al día`;
+            if (elPagaron) {
+                const becadosCount = summary.total_becados || 0;
+                const becadosTxt = becadosCount > 0 ? ` (${becadosCount} becas)` : '';
+                const alDiaCount = summary.alumnos_al_dia !== undefined ? summary.alumnos_al_dia : summary.alumnos_pagaron;
+                elPagaron.textContent = `${alDiaCount} de ${summary.total_activos} alumnos al día${becadosTxt}`;
+            }
 
             const pendCount = summary.pendientes_asignar?.cantidad || 0;
             const elPendCount = document.getElementById('kpi-pendientes-count');
@@ -1057,6 +1064,8 @@ async function loadFinanceData() {
         if (badgeTotal) badgeTotal.textContent = `${unreviewedExtras.length} por revisar`;
 
         filterExtrasTable();
+
+        loadAuditBadgeCount();
 
     } catch (err) {
         console.error('Error cargando datos de finanzas:', err);
@@ -1868,7 +1877,7 @@ let currentAgrupDetailName = '';
 let currentAgrupDetailFilter = 'TODOS';
 let currentAgrupDetailAthletes = [];
 
-function openAgrupacionDetailModal(agrupName) {
+async function openAgrupacionDetailModal(agrupName) {
     currentAgrupDetailName = agrupName;
     currentAgrupDetailFilter = 'TODOS';
 
@@ -1886,17 +1895,31 @@ function openAgrupacionDetailModal(agrupName) {
         else p.classList.remove('active');
     });
 
+    if (!allFinanceAthletes || allFinanceAthletes.length === 0) {
+        try {
+            const athRes = await fetch(`${API_BASE_URL}/finance/athletes?period=${currentFinancePeriod}`);
+            const athData = await athRes.json();
+            allFinanceAthletes = athData.athletes || [];
+        } catch (e) {
+            console.error('Error cargando alumnos para agrupación:', e);
+        }
+    }
+
     const isCategoryMode = (typeof currentCategoriesViewMode !== 'undefined' ? currentCategoriesViewMode : 'agrupacion') === 'category';
 
-    // Filtrar deportistas que pertenezcan a esta agrupación o categoría
+    const cleanTarget = cleanStr(agrupName);
     currentAgrupDetailAthletes = allFinanceAthletes.filter(a => {
         if (a.status === 'INACTIVO' || a.status === 'RETIRADO') return false;
         if (isCategoryMode) {
-            return (a.category || '').trim().toUpperCase() === agrupName.trim().toUpperCase();
+            return cleanStr(a.category) === cleanTarget;
         }
-        if (!a.agrupacion) return agrupName === 'Sin Agrupación';
-        const parts = a.agrupacion.split(/[\/,]/).map(s => s.trim().toUpperCase());
-        return parts.includes(agrupName.trim().toUpperCase());
+        if (!a.agrupacion || a.agrupacion.trim() === '') {
+            return cleanTarget === cleanStr('Sin Agrupación');
+        }
+        const athAgrup = a.agrupacion;
+        if (cleanStr(athAgrup) === cleanTarget) return true;
+        const parts = athAgrup.split(/[\/,]/).map(s => cleanStr(s));
+        return parts.includes(cleanTarget) || parts.some(p => p.length > 2 && (cleanTarget.includes(p) || p.includes(cleanTarget)));
     });
 
     // Calcular estadísticas
@@ -1908,11 +1931,14 @@ function openAgrupacionDetailModal(agrupName) {
     currentAgrupDetailAthletes.forEach(a => {
         const debt = parseFloat(a.debt_amount) || 0;
         const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : 'AMARILLO');
-        if (debt > 0 || sem === 'AMARILLO' || sem === 'NARANJA' || sem === 'ROJO') {
+        const isBecado = a.monthly_fee === 0 || a.fee_type === 'BECADO' || a.fee_type === 'BECA_COMPLETA' || a.status === 'BECADO';
+        const isAlDia = isBecado || (debt <= 0 && (sem === 'AL_DIA' || a.payment_status === 'PAGADO'));
+        
+        if (isAlDia) {
+            alDia++;
+        } else {
             deudores++;
             deudaTotal += debt;
-        } else {
-            alDia++;
         }
     });
 
@@ -1949,7 +1975,8 @@ function renderAgrupacionDetailRows() {
     const list = currentAgrupDetailAthletes.filter(a => {
         const debt = parseFloat(a.debt_amount) || 0;
         const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : 'AMARILLO');
-        const hasDebt = (debt > 0) || (sem === 'AMARILLO' || sem === 'NARANJA' || sem === 'ROJO');
+        const isBecado = a.monthly_fee === 0 || a.fee_type === 'BECADO' || a.fee_type === 'BECA_COMPLETA' || a.status === 'BECADO';
+        const hasDebt = !isBecado && ((debt > 0) || (sem === 'AMARILLO' || sem === 'NARANJA' || sem === 'ROJO'));
 
         if (currentAgrupDetailFilter === 'DEUDORES' && !hasDebt) return false;
         if (currentAgrupDetailFilter === 'AL_DIA' && hasDebt) return false;
@@ -1970,10 +1997,20 @@ function renderAgrupacionDetailRows() {
     tbody.innerHTML = list.map(a => {
         const debt = parseFloat(a.debt_amount) || 0;
         const sem = a.debt_semaforo || (a.payment_status === 'PAGADO' ? 'AL_DIA' : 'AMARILLO');
-        const isAlDia = debt <= 0 && (sem === 'AL_DIA' || a.payment_status === 'PAGADO');
-        const statusBadge = isAlDia 
-            ? `<span style="background:rgba(0,230,118,0.15); color:var(--success); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🟢 Al Día</span>`
-            : `<span style="background:rgba(244,67,54,0.15); color:var(--danger); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🔴 Debe ${a.debt_months || 1} ${a.debt_months === 1 ? 'mes' : 'meses'}</span>`;
+        const isBecado = a.monthly_fee === 0 || a.fee_type === 'BECADO' || a.fee_type === 'BECA_COMPLETA' || a.status === 'BECADO';
+        const isAlDia = isBecado || (debt <= 0 && (sem === 'AL_DIA' || a.payment_status === 'PAGADO'));
+        
+        let statusBadge = '';
+        if (isBecado) {
+            statusBadge = `<span style="background:rgba(187,134,252,0.15); color:var(--accent); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🎓 Becado ($0)</span>`;
+        } else if (isAlDia) {
+            statusBadge = `<span style="background:rgba(0,230,118,0.15); color:var(--success); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🟢 Al Día</span>`;
+        } else {
+            const mCount = a.unpaid_months || a.debt_months || 1;
+            statusBadge = `<span style="background:rgba(244,67,54,0.15); color:var(--danger); padding:3px 8px; border-radius:4px; font-weight:700; font-size:0.75rem;">🔴 Debe ${mCount} ${mCount === 1 ? 'mes' : 'meses'}</span>`;
+        }
+
+        const paid = parseFloat(a.amount_paid) || parseFloat(a.paid_mensualidad) || 0;
 
         return `
             <tr>
@@ -1982,13 +2019,13 @@ function renderAgrupacionDetailRows() {
                     <span class="cat-pill" style="font-size:0.7rem;">${escapeHtml(a.category || '-')}</span>
                 </td>
                 <td><code style="color:var(--accent-light); font-size:0.8rem;">${formatRut(a.rut)}</code></td>
-                <td>${formatCLP(a.monthly_fee)}</td>
-                <td style="color:var(--success); font-weight:700;">${formatCLP(a.paid_mensualidad || 0)}</td>
+                <td>${isBecado ? '<span style="color:var(--accent); font-weight:700;">$0 (Beca)</span>' : formatCLP(a.monthly_fee)}</td>
+                <td style="color:var(--success); font-weight:700;">${formatCLP(paid)}</td>
                 <td style="color:${debt > 0 ? 'var(--danger)' : 'var(--text-muted)'}; font-weight:700;">${formatCLP(debt)}</td>
                 <td>${statusBadge}</td>
                 <td style="text-align:right; white-space:nowrap;">
-                    ${!isAlDia ? `<button class="btn-action-sm" onclick="openWhatsAppModal(${a.id})" style="background:#25D366; color:#000; font-weight:700; border:none; margin-right:4px;" title="Cobrar por WhatsApp">💬 Cobrar</button>` : ''}
-                    <button class="btn-action-sm" onclick="viewAthleteSheet(${a.id})" title="Ver ficha del alumno">👁️ Ficha</button>
+                    ${(!isAlDia && !isBecado) ? `<button class="btn-action-sm" onclick="openWhatsAppModal(${a.id})" style="background:#25D366; color:#000; font-weight:700; border:none; margin-right:4px;" title="Cobrar por WhatsApp">💬 Cobrar</button>` : ''}
+                    <button class="btn-action-sm" onclick="openAthleteModal(${a.id})" title="Ver ficha del alumno">👁️ Ficha</button>
                 </td>
             </tr>
         `;
@@ -2006,21 +2043,25 @@ function exportAgrupacionDetailCSV() {
 
     let csv = 'Alumno,RUT,Categoria,Agrupacion,Arancel,Pagado,Deuda,Meses Deuda,Telefono Alumno,Telefono Apoderado\n';
     currentAgrupDetailAthletes.forEach(a => {
-        csv += `"${a.full_name || `${a.first_name} ${a.last_name}`}","${formatRut(a.rut)}","${a.category || ''}","${a.agrupacion || ''}",${a.monthly_fee || 0},${a.paid_mensualidad || 0},${a.debt_amount || 0},${a.debt_months || 0},"${a.phone || ''}","${a.guardian_phone || ''}"\n`;
+        const paid = parseFloat(a.amount_paid) || parseFloat(a.paid_mensualidad) || 0;
+        const debt = parseFloat(a.debt_amount) || 0;
+        const months = a.unpaid_months || a.debt_months || 0;
+        const apoPhone = a.apoderado_phone || a.guardian_phone || '';
+        csv += `"${a.full_name || `${a.first_name} ${a.last_name}`}","${formatRut(a.rut)}","${a.category || ''}","${a.agrupacion || ''}",${a.monthly_fee || 0},${paid},${debt},${months},"${a.phone || ''}","${apoPhone}"\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.setAttribute('download', `agrupacion_${currentAgrupDetailName.replace(/[^a-zA-Z0-9]/g, '_')}_${currentFinancePeriod}.csv`);
+    link.setAttribute('download', `agrupacion_${(currentAgrupDetailName || 'Agrupacion').replace(/[^a-zA-Z0-9]/g, '_')}_${currentFinancePeriod}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     toast('📥 Planilla de la agrupación descargada');
 }
 
-// ── REGISTRO RÁPIDO DE MENSUALIDAD Y SELECTOR DE HERMANOS ──
+// ── REGISTRO RÁPIDO DE MENSUALIDAD Y SELECTOR DE HERMANOS / FAMILIAS ──
 
 let currentSiblingMovement = null;
 let currentSiblingAthletes = [];
@@ -2031,41 +2072,32 @@ async function quickRegisterMensualidad(movementId) {
     if (!m) return toast('Movimiento no encontrado');
 
     const cleanRut = (m.payer_rut || '').replace(/[^0-9Kk]/g, '').toUpperCase();
+    let matchedAthletes = [];
 
-    // 1. Si no hay RUT pero sí tiene un athlete_id asignado previamente:
-    if (!cleanRut && m.athlete_id) {
-        return executeAssignMensualidad(m.id, m.athlete_id, m.period || currentFinancePeriod);
-    }
-
-    // 2. Si hay RUT, consultar cuántos alumnos tiene asociados en la base de datos:
+    // 1. Si hay RUT del pagador, consultar qué alumnos tiene vinculados
     if (cleanRut) {
         try {
             const res = await fetch(`${API_BASE_URL}/finance/payer-ruts/lookup?rut=${cleanRut}`);
             if (res.ok) {
                 const data = await res.json();
-                const matchedAthletes = data.athletes || [];
-
-                if (matchedAthletes.length === 1) {
-                    return executeAssignMensualidad(m.id, matchedAthletes[0].id, m.period || currentFinancePeriod, matchedAthletes[0].first_name);
-                } else if (matchedAthletes.length > 1) {
-                    return openSelectSiblingModal(m, matchedAthletes);
-                }
+                matchedAthletes = data.athletes || [];
             }
         } catch (e) {
             console.error('Error buscando RUT pagador:', e);
         }
     }
 
-    // 3. Si ya tenía athlete_id en el movimiento:
+    // 2. Si el movimiento ya tenía un alumno asignado previamente, incluirlo si no está
     if (m.athlete_id) {
-        const ath = allFinanceAthletes.find(a => a.id === m.athlete_id);
-        return executeAssignMensualidad(m.id, m.athlete_id, m.period || currentFinancePeriod, ath?.first_name);
+        const existingAth = allFinanceAthletes.find(a => a.id === m.athlete_id);
+        if (existingAth && !matchedAthletes.some(a => a.id === existingAth.id)) {
+            matchedAthletes.unshift(existingAth);
+        }
     }
 
-    // 4. Si no tiene alumno ni match por RUT, abrir modal de asignación con mensualidad preseleccionada
-    await openEditMovementModal(m.id);
-    const sel = document.getElementById('edit-mov-concept');
-    if (sel) sel.value = 'MENSUALIDAD';
+    // Siempre abrimos el modal de confirmación para que la tesorera vea a qué deportista se le imputa
+    // o pueda buscar a otra persona
+    openSelectSiblingModal(m, matchedAthletes);
 }
 
 async function executeAssignMensualidad(movementId, athleteId, period, athleteName) {
@@ -2090,6 +2122,9 @@ async function executeAssignMensualidad(movementId, athleteId, period, athleteNa
             toast(`✅ Mensualidad registrada exitosamente para ${name}`);
             closeSelectSiblingModal();
             loadFinanceData();
+            if (currentActiveAthlete && currentActiveAthlete.id) {
+                openAthleteModal(currentActiveAthlete.id);
+            }
         } else {
             toast(data.error || 'Error al registrar mensualidad');
         }
@@ -2100,7 +2135,7 @@ async function executeAssignMensualidad(movementId, athleteId, period, athleteNa
 
 function openSelectSiblingModal(mov, athletes) {
     currentSiblingMovement = mov;
-    currentSiblingAthletes = athletes;
+    currentSiblingAthletes = athletes || [];
 
     const nameEl = document.getElementById('sibling-payer-name');
     if (nameEl) nameEl.textContent = mov.payer_name || 'Desconocido';
@@ -2113,28 +2148,98 @@ function openSelectSiblingModal(mov, athletes) {
 
     const container = document.getElementById('sibling-cards-container');
     if (container) {
-        container.innerHTML = athletes.map(a => {
-            const fee = parseFloat(a.monthly_fee) || 0;
-            const isMatchAmount = Math.abs(fee - parseFloat(mov.amount)) < 1;
-            return `
-                <div style="background:#181818; border:1px solid ${isMatchAmount ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:12px 14px; display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <strong style="color:var(--text); font-size:0.95rem; display:block;">${escapeHtml(a.first_name)} ${escapeHtml(a.last_name)}</strong>
-                        <div style="font-size:0.78rem; color:var(--text-muted);">
-                            ${escapeHtml(a.category || '')} • Arancel: <strong style="color:var(--accent-light);">${formatCLP(fee)}</strong>
-                            ${a.relationship ? ` • ${escapeHtml(a.relationship)}` : ''}
+        if (athletes && athletes.length > 0) {
+            container.innerHTML = athletes.map(a => {
+                const fee = parseFloat(a.monthly_fee) || 0;
+                const isMatchAmount = Math.abs(fee - parseFloat(mov.amount)) < 1;
+                const fullName = a.full_name || `${a.first_name || ''} ${a.last_name || ''}`;
+                const firstName = a.first_name || fullName.split(' ')[0];
+                return `
+                    <div style="background:#181818; border:1px solid ${isMatchAmount ? 'var(--accent)' : 'var(--border)'}; border-radius:10px; padding:12px 14px; display:flex; justify-content:space-between; align-items:center; gap:12px;">
+                        <div>
+                            <strong style="color:var(--text); font-size:0.95rem; display:block;">${escapeHtml(fullName)}</strong>
+                            <div style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
+                                ${escapeHtml(a.category || '')} • Arancel: <strong style="color:var(--accent-light);">${formatCLP(fee)}</strong>
+                                ${a.relationship ? ` • ${escapeHtml(a.relationship)}` : ''}
+                            </div>
+                            ${isMatchAmount ? `<span style="font-size:0.72rem; color:var(--accent); background:rgba(187,134,252,0.1); padding:2px 6px; border-radius:4px; font-weight:700; margin-top:4px; display:inline-block;">🎯 Coincide con arancel</span>` : ''}
                         </div>
-                        ${isMatchAmount ? `<span style="font-size:0.72rem; color:var(--accent); background:rgba(187,134,252,0.1); padding:2px 6px; border-radius:4px; font-weight:700;">🎯 Coincide con arancel</span>` : ''}
+                        <button class="primary" onclick="executeAssignMensualidad(${mov.id}, ${a.id || a.athlete_id}, '${mov.period || currentFinancePeriod}', '${escapeHtml(firstName)}')" style="padding:8px 16px; font-size:0.84rem; white-space:nowrap; font-weight:700;">
+                            ✓ Es de ${escapeHtml(firstName)}
+                        </button>
                     </div>
-                    <button class="primary" onclick="executeAssignMensualidad(${mov.id}, ${a.id || a.athlete_id}, '${mov.period || currentFinancePeriod}', '${escapeHtml(a.first_name)}')" style="padding:6px 14px; font-size:0.82rem; white-space:nowrap;">
-                        ✓ Es de ${escapeHtml(a.first_name)}
-                    </button>
+                `;
+            }).join('');
+        } else {
+            container.innerHTML = `
+                <div style="text-align:center; padding:18px; color:var(--text-muted); background:#181818; border-radius:8px; font-size:0.85rem;">
+                    ℹ️ No hay alumnos asociados previamente a este RUT.<br>
+                    <span style="color:var(--accent-light); font-size:0.8rem;">Usa el buscador abajo para asignar al alumno correspondiente.</span>
                 </div>
             `;
-        }).join('');
+        }
     }
 
-    document.getElementById('f-select-sibling-modal')?.classList.remove('hidden');
+    // Resetear buscador alternativo
+    const searchInp = document.getElementById('sibling-search-other');
+    if (searchInp) searchInp.value = '';
+    const otherResults = document.getElementById('sibling-other-results');
+    if (otherResults) {
+        otherResults.innerHTML = '';
+        otherResults.classList.add('hidden');
+    }
+
+    const modal = document.getElementById('f-select-sibling-modal');
+    if (modal) {
+        modal.style.zIndex = '10070';
+        modal.classList.remove('hidden');
+    }
+}
+
+function searchOtherStudentForMensualidad(query) {
+    const resultsContainer = document.getElementById('sibling-other-results');
+    if (!resultsContainer) return;
+
+    const q = (query || '').trim().toLowerCase();
+    if (!q || q.length < 2) {
+        resultsContainer.innerHTML = '';
+        resultsContainer.classList.add('hidden');
+        return;
+    }
+
+    const matches = allFinanceAthletes.filter(a => {
+        if (a.status === 'INACTIVO' || a.status === 'RETIRADO') return false;
+        const name = (a.full_name || `${a.first_name || ''} ${a.last_name || ''}`).toLowerCase();
+        const rut = (a.rut || '').replace(/[^0-9Kk]/g, '').toLowerCase();
+        return name.includes(q) || rut.includes(q);
+    }).slice(0, 6);
+
+    if (matches.length === 0) {
+        resultsContainer.innerHTML = `<div style="padding:10px; color:var(--text-muted); font-size:0.82rem; text-align:center;">No se encontraron deportistas con "${escapeHtml(query)}"</div>`;
+        resultsContainer.classList.remove('hidden');
+        return;
+    }
+
+    const movId = currentSiblingMovement ? currentSiblingMovement.id : null;
+    const movPeriod = currentSiblingMovement ? (currentSiblingMovement.period || currentFinancePeriod) : currentFinancePeriod;
+
+    resultsContainer.innerHTML = matches.map(a => {
+        const fee = parseFloat(a.monthly_fee) || 0;
+        const fullName = a.full_name || `${a.first_name || ''} ${a.last_name || ''}`;
+        const firstName = a.first_name || fullName.split(' ')[0];
+        return `
+            <div style="background:#222; border:1px solid var(--border); border-radius:8px; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                <div>
+                    <strong style="color:var(--text); font-size:0.85rem; display:block;">${escapeHtml(fullName)}</strong>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(a.category || '')} • Arancel: ${formatCLP(fee)}</span>
+                </div>
+                <button class="primary" onclick="executeAssignMensualidad(${movId}, ${a.id}, '${movPeriod}', '${escapeHtml(firstName)}')" style="padding:5px 12px; font-size:0.78rem; font-weight:700; white-space:nowrap;">
+                    ✓ Asignar a ${escapeHtml(firstName)}
+                </button>
+            </div>
+        `;
+    }).join('');
+    resultsContainer.classList.remove('hidden');
 }
 
 function closeSelectSiblingModal() {
@@ -2148,6 +2253,213 @@ function openSplitFromSibling() {
         const movId = currentSiblingMovement.id;
         closeSelectSiblingModal();
         openSplitMovementModal(movId);
+    }
+}
+
+// ── PANEL DE AUDITORÍA INTEGRAL Y CALIDAD DE DATOS ──
+
+let auditData = null;
+let currentAuditFilter = 'ALL';
+
+async function loadAuditData() {
+    const loadingEl = document.getElementById('audit-loading-indicator');
+    const container = document.getElementById('audit-alerts-container');
+    if (loadingEl) loadingEl.classList.remove('hidden');
+    if (container) container.innerHTML = '';
+
+    try {
+        const res = await fetch(`${API_BASE_URL}/finance/audit?period=${currentFinancePeriod}`);
+        if (!res.ok) throw new Error('Error al consultar auditoría');
+        const data = await res.json();
+        auditData = data;
+
+        const summary = data.summary || {};
+        const elCrit = document.getElementById('audit-kpi-critical');
+        if (elCrit) elCrit.textContent = summary.critical_count || 0;
+
+        const elWarn = document.getElementById('audit-kpi-warning');
+        if (elWarn) elWarn.textContent = summary.warning_count || 0;
+
+        const elInfo = document.getElementById('audit-kpi-info');
+        if (elInfo) elInfo.textContent = summary.info_count || 0;
+
+        const elMon = document.getElementById('audit-kpi-monitor');
+        if (elMon) elMon.textContent = summary.monitor_count || 0;
+
+        updateAuditBadge(summary.total_alerts || 0);
+
+        renderAuditAlerts();
+    } catch (e) {
+        console.error('Error cargando auditoría:', e);
+        if (container) {
+            container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--danger);">Error al sincronizar diagnósticos de auditoría: ${escapeHtml(e.message)}</div>`;
+        }
+    } finally {
+        if (loadingEl) loadingEl.classList.add('hidden');
+    }
+}
+
+async function loadAuditBadgeCount() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/finance/audit?period=${currentFinancePeriod}`);
+        if (res.ok) {
+            const data = await res.json();
+            const total = data.summary?.total_alerts || 0;
+            updateAuditBadge(total);
+        }
+    } catch (e) {
+        console.warn('Could not load audit badge count:', e);
+    }
+}
+
+function updateAuditBadge(count) {
+    const badge = document.getElementById('f-audit-badge');
+    if (badge) {
+        badge.textContent = count;
+        if (count > 0) {
+            badge.classList.remove('hidden');
+        } else {
+            badge.classList.add('hidden');
+        }
+    }
+}
+
+function filterAuditPill(filter, btn) {
+    currentAuditFilter = filter;
+    document.querySelectorAll('#f-tab-audit .f-status-pills .f-pill').forEach(p => p.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    renderAuditAlerts();
+}
+
+function filterAuditSearch() {
+    renderAuditAlerts();
+}
+
+function renderAuditAlerts() {
+    const container = document.getElementById('audit-alerts-container');
+    if (!container) return;
+
+    if (!auditData || !auditData.alerts || auditData.alerts.length === 0) {
+        container.innerHTML = `
+            <div style="text-align:center; padding:40px; background:#141414; border-radius:12px; border:1px dashed var(--border);">
+                <div style="font-size:2rem; margin-bottom:8px;">🎉</div>
+                <strong style="color:var(--success); font-size:1.05rem; display:block;">¡Todos los datos están perfectos!</strong>
+                <span style="font-size:0.84rem; color:var(--text-muted);">No se detectaron RUTs faltantes, desajustes de categoría ni movimientos sin clasificar.</span>
+            </div>
+        `;
+        return;
+    }
+
+    const query = (document.getElementById('audit-search-input')?.value || '').trim().toLowerCase();
+
+    const filtered = auditData.alerts.filter(a => {
+        if (currentAuditFilter !== 'ALL' && a.severity !== currentAuditFilter) return false;
+        if (query) {
+            const str = `${a.title} ${a.subtitle} ${a.description} ${a.suggestion}`.toLowerCase();
+            if (!str.includes(query)) return false;
+        }
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        container.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-muted);">No hay alertas que coincidan con el filtro seleccionado.</div>`;
+        return;
+    }
+
+    container.innerHTML = filtered.map(a => {
+        let borderColor = 'rgba(255,255,255,0.1)';
+        let badgeColor = 'var(--text-muted)';
+        let badgeBg = 'rgba(255,255,255,0.06)';
+        let badgeLabel = a.severity;
+
+        if (a.severity === 'CRITICAL') {
+            borderColor = 'rgba(244,67,54,0.4)';
+            badgeColor = 'var(--danger)';
+            badgeBg = 'rgba(244,67,54,0.12)';
+            badgeLabel = 'CRÍTICA';
+        } else if (a.severity === 'WARNING') {
+            borderColor = 'rgba(255,171,0,0.4)';
+            badgeColor = '#ffab00';
+            badgeBg = 'rgba(255,171,0,0.12)';
+            badgeLabel = 'ATENCIÓN';
+        } else if (a.severity === 'INFO') {
+            borderColor = 'rgba(0,230,118,0.4)';
+            badgeColor = 'var(--success)';
+            badgeBg = 'rgba(0,230,118,0.12)';
+            badgeLabel = 'RESCATABLE';
+        } else if (a.severity === 'MONITOR') {
+            borderColor = 'rgba(187,134,252,0.4)';
+            badgeColor = '#bb86fc';
+            badgeBg = 'rgba(187,134,252,0.12)';
+            badgeLabel = 'FAMILIAS';
+        }
+
+        const quickFixBtn = a.quick_fix ? `
+            <button class="primary" onclick="applyAuditQuickFix('${a.quick_fix.action}', decodeURIComponent('${encodeURIComponent(JSON.stringify(a.quick_fix.payload))}'), '${a.id}')" style="padding:6px 14px; font-size:0.82rem; font-weight:700; white-space:nowrap; background:${badgeColor}; color:#000; border:none; display:flex; align-items:center; gap:5px;">
+                ⚡ ${escapeHtml(a.quick_fix.label)}
+            </button>
+        ` : '';
+
+        const actionBtn = a.meta?.athlete_id ? `
+            <button class="btn-action-sm" onclick="openAthleteModal(${a.meta.athlete_id})" style="font-size:0.8rem; white-space:nowrap;">
+                👁️ Ver Ficha
+            </button>
+        ` : a.meta?.movement_id ? `
+            <button class="btn-action-sm" onclick="openEditMovementModal(${a.meta.movement_id})" style="font-size:0.8rem; white-space:nowrap;">
+                ✏️ Editar Pago
+            </button>
+        ` : '';
+
+        return `
+            <div id="audit-alert-card-${a.id}" style="background:#151515; border:1px solid ${borderColor}; border-left:4px solid ${badgeColor}; border-radius:10px; padding:14px 18px; display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+                    <div style="flex:1; min-width:250px;">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+                            <span style="font-size:0.7rem; font-weight:800; color:${badgeColor}; background:${badgeBg}; padding:2px 8px; border-radius:4px; text-transform:uppercase; letter-spacing:0.5px;">${badgeLabel}</span>
+                            <span style="font-size:0.75rem; color:var(--text-dim); text-transform:uppercase;">${a.type}</span>
+                        </div>
+                        <strong style="color:var(--text); font-size:0.98rem; display:block;">${escapeHtml(a.title)}</strong>
+                        <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">${escapeHtml(a.subtitle)}</div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+                        ${quickFixBtn}
+                        ${actionBtn}
+                    </div>
+                </div>
+
+                <div style="font-size:0.84rem; color:var(--text-secondary); line-height:1.45; background:rgba(0,0,0,0.2); padding:8px 12px; border-radius:6px;">
+                    ${escapeHtml(a.description)}
+                </div>
+
+                ${a.suggestion ? `
+                    <div style="font-size:0.8rem; color:var(--accent-light); display:flex; align-items:center; gap:6px;">
+                        <span>💡 <strong>Sugerencia:</strong> ${escapeHtml(a.suggestion)}</span>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+async function applyAuditQuickFix(action, payloadJsonStr, alertId) {
+    try {
+        const payload = JSON.parse(decodeURIComponent(payloadJsonStr));
+        const res = await fetch(`${API_BASE_URL}/finance/audit/quick-fix`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, payload })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            toast(`✅ ${data.message || 'Acción aplicada correctamente'}`);
+            await loadFinanceData();
+            await loadAuditData();
+        } else {
+            toast(`❌ ${data.error || 'Error al aplicar solución'}`);
+        }
+    } catch (e) {
+        console.error('Error aplicando solución rápida:', e);
+        toast('Error de conexión al aplicar solución rápida');
     }
 }
 
@@ -2662,7 +2974,11 @@ function setupEditMovementModal(mov) {
         clearEditMovementAthlete();
     }
 
-    document.getElementById('f-edit-mov-modal')?.classList.remove('hidden');
+    const modal = document.getElementById('f-edit-mov-modal');
+    if (modal) {
+        modal.style.zIndex = '10050';
+        modal.classList.remove('hidden');
+    }
 }
 
 async function openEditMovementModal(movId) {
@@ -2810,8 +3126,11 @@ function openSplitMovementModal(movId) {
 
     renderSplitParts();
     updateSplitBalance();
-
-    document.getElementById('f-split-modal')?.classList.remove('hidden');
+    const splitModal = document.getElementById('f-split-modal');
+    if (splitModal) {
+        splitModal.style.zIndex = '10060';
+        splitModal.classList.remove('hidden');
+    }
 }
 
 function closeSplitModal() {

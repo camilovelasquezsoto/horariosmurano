@@ -85,6 +85,10 @@ router.post('/finance/movements/split', financeController.splitMovement);
 router.get('/finance/summary', financeController.getSummary);
 router.post('/finance/payments/manual', financeController.registerManualPayment);
 
+// Rutas de Auditoría Integral y Diagnóstico de Datos
+router.get('/finance/audit', financeController.getAuditReport);
+router.post('/finance/audit/quick-fix', financeController.quickFixAuditItem);
+
 // Rutas de gestión histórica, respaldo y optimización de base de datos
 router.get('/finance/archive/export', financeController.exportMonthlyArchive);
 router.post('/finance/archive/purge', financeController.purgeMonthlyMovements);

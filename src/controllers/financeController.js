@@ -7,6 +7,8 @@
 
 const pool = require('../config/db');
 const xlsx = require('xlsx');
+const fs = require('fs');
+const path = require('path');
 
 // Utilidades para normalización de RUT chileno
 function cleanRut(rut) {
@@ -307,7 +309,7 @@ exports.createAthlete = async (req, res) => {
 exports.updateAthlete = async (req, res) => {
     try {
         const { id } = req.params;
-        const { first_name, last_name, category, agrupacion, fee_type, monthly_fee, status, phone, apoderado_phone, join_date, notes } = req.body;
+        const { first_name, last_name, category, agrupacion, fee_type, monthly_fee, status, phone, apoderado_phone, join_date, notes, rut } = req.body;
 
         const curRes = await pool.query('SELECT * FROM athletes WHERE id = $1', [id]);
         if (curRes.rows.length === 0) {
@@ -320,19 +322,25 @@ exports.updateAthlete = async (req, res) => {
         const newCat = category !== undefined ? category.trim() : cur.category;
         const newAgrup = agrupacion !== undefined ? agrupacion.trim() : cur.agrupacion;
         const newFeeType = fee_type !== undefined ? fee_type : cur.fee_type;
-        const newFee = monthly_fee !== undefined ? parseFloat(monthly_fee) : cur.monthly_fee;
+        let newFee = monthly_fee !== undefined ? parseFloat(monthly_fee) : cur.monthly_fee;
         const newStatus = status !== undefined ? status : cur.status;
         const newPhone = phone !== undefined ? phone.trim() : cur.phone;
         const newApodPhone = apoderado_phone !== undefined ? apoderado_phone.trim() : cur.apoderado_phone;
         const newJoinDate = join_date !== undefined ? join_date : (cur.join_date ? new Date(cur.join_date).toISOString().slice(0, 10) : '2026-09-01');
         const newNotes = notes !== undefined ? notes : cur.notes;
+        const newRut = rut !== undefined ? cleanRut(rut) : cur.rut;
+
+        // Si se define como becado completo y no se indicó cuota explícita, arancel es 0
+        if ((newStatus === 'BECADO' || newFeeType === 'BECA_COMPLETA' || newFeeType === 'BECADO') && monthly_fee === undefined) {
+            newFee = 0;
+        }
 
         const result = await pool.query(
             `UPDATE athletes 
              SET first_name = $1, last_name = $2, category = $3, agrupacion = $4, fee_type = $5, 
-                 monthly_fee = $6, status = $7, phone = $8, apoderado_phone = $9, join_date = $10, notes = $11
-             WHERE id = $12 RETURNING *`,
-            [newFirst, newLast, newCat, newAgrup, newFeeType, newFee, newStatus, newPhone, newApodPhone, newJoinDate, newNotes, id]
+                 monthly_fee = $6, status = $7, phone = $8, apoderado_phone = $9, join_date = $10, notes = $11, rut = $12
+             WHERE id = $13 RETURNING *`,
+            [newFirst, newLast, newCat, newAgrup, newFeeType, newFee, newStatus, newPhone, newApodPhone, newJoinDate, newNotes, newRut, id]
         );
 
         res.json(result.rows[0]);
@@ -1087,16 +1095,30 @@ exports.getSummary = async (req, res) => {
         const { period } = req.query;
         const currentPeriod = period || 'SEPTIEMBRE-2026';
 
-        // 1. Total deportistas y arancel esperado (excluyendo inactivos y retirados)
+        // Parsear fin de mes del periodo (ej: 'SEPTIEMBRE-2026')
+        const monthMap = {
+            'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4, 'MAYO': 5, 'JUNIO': 6,
+            'JULIO': 7, 'AGOSTO': 8, 'SEPTIEMBRE': 9, 'OCTUBRE': 10, 'NOVIEMBRE': 11, 'DICIEMBRE': 12
+        };
+        let periodEnd = '2026-09-30';
+        const parts = currentPeriod.split('-');
+        if (parts.length === 2) {
+            const mNum = monthMap[parts[0].toUpperCase()] || 9;
+            const yNum = parseInt(parts[1], 10) || 2026;
+            const lastDay = new Date(yNum, mNum, 0).getDate();
+            periodEnd = `${yNum}-${String(mNum).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        }
+
+        // 1. Total deportistas y arancel esperado (excluyendo inactivos, retirados e ingresos posteriores)
         const athletesRes = await pool.query(`
             SELECT 
-                COUNT(*) FILTER (WHERE status NOT IN ('INACTIVO', 'RETIRADO')) as total_athletes,
-                COUNT(*) FILTER (WHERE (status = 'BECADO' OR fee_type = 'BECADO') AND status NOT IN ('INACTIVO', 'RETIRADO')) as total_becados,
-                COUNT(*) FILTER (WHERE status = 'ACTIVO' AND fee_type != 'BECADO') as total_activos_cobro,
-                COALESCE(SUM(monthly_fee) FILTER (WHERE status = 'ACTIVO' AND fee_type != 'BECADO'), 0) as total_esperado,
+                COUNT(*) FILTER (WHERE status NOT IN ('INACTIVO', 'RETIRADO') AND (join_date IS NULL OR join_date <= $1)) as total_athletes,
+                COUNT(*) FILTER (WHERE (status = 'BECADO' OR fee_type IN ('BECADO', 'BECA_COMPLETA') OR monthly_fee = 0) AND status NOT IN ('INACTIVO', 'RETIRADO') AND (join_date IS NULL OR join_date <= $1)) as total_becados,
+                COUNT(*) FILTER (WHERE status = 'ACTIVO' AND fee_type NOT IN ('BECADO', 'BECA_COMPLETA') AND monthly_fee > 0 AND (join_date IS NULL OR join_date <= $1)) as total_activos_cobro,
+                COALESCE(SUM(monthly_fee) FILTER (WHERE status = 'ACTIVO' AND fee_type NOT IN ('BECADO', 'BECA_COMPLETA') AND monthly_fee > 0 AND (join_date IS NULL OR join_date <= $1)), 0) as total_esperado,
                 COUNT(*) FILTER (WHERE status IN ('INACTIVO', 'RETIRADO')) as total_inactivos
             FROM athletes
-        `);
+        `, [periodEnd]);
 
         // 2. Total recaudado por mensualidades
         const mensualidadesRes = await pool.query(`
@@ -1138,7 +1160,7 @@ exports.getSummary = async (req, res) => {
             WHERE period = $1 AND status = 'PENDIENTE'
         `, [currentPeriod]);
 
-        // 6. Desglose por categoría (solo alumnos activos, sin producto cartesiano)
+        // 6. Desglose por categoría (solo alumnos activos que hayan ingresado a la fecha)
         const categoryRes = await pool.query(`
             WITH ath_movs AS (
                 SELECT 
@@ -1153,17 +1175,18 @@ exports.getSummary = async (req, res) => {
             SELECT 
                 a.category,
                 COUNT(a.id) as total_alumnos,
-                COALESCE(SUM(a.monthly_fee) FILTER (WHERE a.fee_type != 'BECADO' AND a.fee_type != 'BECA_COMPLETA'), 0) as esperado,
+                COUNT(a.id) FILTER (WHERE a.fee_type IN ('BECADO', 'BECA_COMPLETA') OR a.status = 'BECADO' OR a.monthly_fee = 0) as total_becados,
+                COALESCE(SUM(a.monthly_fee) FILTER (WHERE a.status = 'ACTIVO' AND a.fee_type NOT IN ('BECADO', 'BECA_COMPLETA') AND a.monthly_fee > 0), 0) as esperado,
                 COALESCE(SUM(m.rec_mensualidad), 0) as recaudado_mensualidad,
                 COALESCE(SUM(m.rec_extras), 0) as recaudado_extras,
                 COALESCE(SUM(m.rec_total), 0) as recaudado_total,
                 COALESCE(SUM(m.rec_total), 0) as recaudado
             FROM athletes a
             LEFT JOIN ath_movs m ON a.id = m.athlete_id
-            WHERE a.status NOT IN ('INACTIVO', 'RETIRADO')
+            WHERE a.status NOT IN ('INACTIVO', 'RETIRADO') AND (a.join_date IS NULL OR a.join_date <= $2)
             GROUP BY a.category
             ORDER BY a.category ASC
-        `, [currentPeriod]);
+        `, [currentPeriod, periodEnd]);
 
         // 7. Desglose por agrupación (Equipos Bayes - separación limpia de agrupaciones dobles)
         const agrupacionesRes = await pool.query(`
@@ -1182,6 +1205,8 @@ exports.getSummary = async (req, res) => {
                     a.id,
                     a.monthly_fee,
                     a.fee_type,
+                    a.status,
+                    a.join_date,
                     TRIM(UNNEST(STRING_TO_ARRAY(COALESCE(NULLIF(a.agrupacion, ''), 'Sin Agrupación'), '/'))) as agrupacion,
                     m.rec_mensualidad,
                     m.rec_extras,
@@ -1193,16 +1218,17 @@ exports.getSummary = async (req, res) => {
             SELECT 
                 agrupacion,
                 COUNT(id) as total_alumnos,
-                COALESCE(SUM(monthly_fee) FILTER (WHERE fee_type != 'BECADO' AND fee_type != 'BECA_COMPLETA'), 0) as esperado,
+                COUNT(id) FILTER (WHERE fee_type IN ('BECADO', 'BECA_COMPLETA') OR status = 'BECADO' OR monthly_fee = 0) as total_becados,
+                COALESCE(SUM(monthly_fee) FILTER (WHERE status = 'ACTIVO' AND fee_type NOT IN ('BECADO', 'BECA_COMPLETA') AND monthly_fee > 0), 0) as esperado,
                 COALESCE(SUM(rec_mensualidad), 0) as recaudado_mensualidad,
                 COALESCE(SUM(rec_extras), 0) as recaudado_extras,
                 COALESCE(SUM(rec_total), 0) as recaudado_total,
                 COALESCE(SUM(rec_total), 0) as recaudado
             FROM split_athletes
-            WHERE agrupacion != '' AND agrupacion NOT ILIKE 'PF%' AND agrupacion NOT ILIKE '%PF'
+            WHERE agrupacion != '' AND agrupacion NOT ILIKE 'PF%' AND agrupacion NOT ILIKE '%PF' AND (join_date IS NULL OR join_date <= $2)
             GROUP BY agrupacion
             ORDER BY agrupacion ASC
-        `, [currentPeriod]);
+        `, [currentPeriod, periodEnd]);
 
         // 8. Resumen de Egresos y Gastos del período
         const egresosRes = await pool.query(`
@@ -1230,6 +1256,12 @@ exports.getSummary = async (req, res) => {
         const totalEgresos = parseFloat(egresosRes.rows[0].total_egresos) || 0;
         const countEgresos = parseInt(egresosRes.rows[0].count_egresos, 10) || 0;
 
+        const countPagaron = parseInt(mensualidadesRes.rows[0].total_alumnos_pagaron, 10) || 0;
+        const countBecados = parseInt(athletesRes.rows[0].total_becados, 10) || 0;
+        const totalActivosCobro = parseInt(athletesRes.rows[0].total_activos_cobro, 10) || 0;
+        const totalAlumnosPeriodo = parseInt(athletesRes.rows[0].total_athletes, 10) || 0;
+        const alumnosAlDia = Math.min(totalAlumnosPeriodo, countPagaron + countBecados);
+
         res.json({
             period: currentPeriod,
             esperado: parseFloat(athletesRes.rows[0].total_esperado),
@@ -1239,9 +1271,11 @@ exports.getSummary = async (req, res) => {
             total_egresos: totalEgresos,
             count_egresos: countEgresos,
             saldo_neto: totalRecaudado - totalEgresos,
-            alumnos_pagaron: parseInt(mensualidadesRes.rows[0].total_alumnos_pagaron, 10),
-            total_activos: parseInt(athletesRes.rows[0].total_activos_cobro, 10),
-            total_becados: parseInt(athletesRes.rows[0].total_becados, 10),
+            alumnos_pagaron: countPagaron,
+            alumnos_al_dia: alumnosAlDia,
+            total_activos: totalActivosCobro,
+            total_alumnos_periodo: totalAlumnosPeriodo,
+            total_becados: countBecados,
             total_inactivos: parseInt(athletesRes.rows[0].total_inactivos, 10),
             pendientes_asignar: {
                 cantidad: parseInt(pendingRes.rows[0].count_pendientes, 10),
@@ -1255,6 +1289,436 @@ exports.getSummary = async (req, res) => {
     } catch (err) {
         console.error('Error al generar resumen financiero:', err);
         res.status(500).json({ error: 'Error al generar resumen', details: err.message });
+    }
+};
+
+// 12. Auditoría Integral y Diagnóstico de Calidad de Datos
+exports.getAuditReport = async (req, res) => {
+    try {
+        const { period } = req.query;
+        const currentPeriod = period || 'SEPTIEMBRE-2026';
+
+        // 1. Obtener deportistas
+        const athQuery = `
+            SELECT 
+                a.id, a.first_name, a.last_name, (a.first_name || ' ' || a.last_name) as full_name,
+                a.category, COALESCE(a.agrupacion, 'Sin Agrupación') as agrupacion,
+                a.phone, a.apoderado_phone, a.join_date, a.rut, a.fee_type, a.monthly_fee,
+                a.status, a.notes,
+                COALESCE(ruts_agg.payer_ruts, '[]') as payer_ruts
+            FROM athletes a
+            LEFT JOIN (
+                SELECT 
+                    athlete_id,
+                    json_agg(
+                        json_build_object(
+                            'id', id,
+                            'payer_rut', payer_rut,
+                            'payer_name', payer_name,
+                            'relationship', relationship
+                        )
+                    ) as payer_ruts
+                FROM athlete_payer_ruts
+                GROUP BY athlete_id
+            ) ruts_agg ON a.id = ruts_agg.athlete_id
+            ORDER BY a.first_name, a.last_name
+        `;
+        const athletesRes = await pool.query(athQuery);
+        const athletes = athletesRes.rows;
+
+        // 2. Obtener movimientos del periodo
+        const movQuery = `
+            SELECT 
+                m.id, TO_CHAR(m.date, 'YYYY-MM-DD') as date,
+                m.payer_rut, m.payer_name, m.amount, m.athlete_id,
+                m.period, m.category_concept, m.status, m.notes,
+                (a.first_name || ' ' || a.last_name) as athlete_name,
+                a.category as athlete_category
+            FROM bank_movements m
+            LEFT JOIN athletes a ON m.athlete_id = a.id
+            WHERE m.period = $1
+            ORDER BY m.date DESC, m.id DESC
+        `;
+        const movementsRes = await pool.query(movQuery, [currentPeriod]);
+        const movements = movementsRes.rows;
+
+        const alerts = [];
+
+        // --- ALERTA 1: RUTS FALTANTES O DISCREPANTES ---
+        athletes.forEach(a => {
+            const cRut = cleanRut(a.rut);
+            if (a.status !== 'INACTIVO' && a.status !== 'RETIRADO') {
+                if (!cRut || cRut.length < 8) {
+                    alerts.push({
+                        id: `rut-missing-${a.id}`,
+                        type: 'RUT',
+                        severity: 'CRITICAL',
+                        title: `RUT Faltante o Inválido: ${a.full_name}`,
+                        subtitle: `${a.category} • ${a.agrupacion}`,
+                        description: `El deportista ${a.full_name} figura en la base de datos sin un RUT válido (registrado como: "${a.rut || 'vacío'}").`,
+                        suggestion: `Ingresar el RUT oficial para que las transferencias bancarias de su familia puedan conciliarse automáticamente.`,
+                        quick_fix: null,
+                        meta: { athlete_id: a.id, athlete_name: a.full_name }
+                    });
+                }
+            }
+
+            // Casos conocidos específicos con solución inmediata
+            if (a.id === 235 || (a.first_name.includes('Tomás') && a.last_name.includes('Hernández'))) {
+                if (cRut === '251709653') {
+                    alerts.push({
+                        id: `rut-fix-tomas-${a.id}`,
+                        type: 'RUT',
+                        severity: 'CRITICAL',
+                        title: `Transposición de Dígitos: Tomás Alonso Hernández Licandeo`,
+                        subtitle: `${a.category} • RUT actual: 25.170.965-3`,
+                        description: `En la base de datos figura con RUT 25.170.965-3, pero en el Formulario oficial su RUT es 25.170.956-3 (dígitos 65 invertidos).`,
+                        suggestion: `Corregir el RUT a 25.170.956-3 para asegurar la conciliación bancaria.`,
+                        quick_fix: {
+                            action: 'fix_rut',
+                            label: 'Corregir a 25.170.956-3',
+                            payload: { athlete_id: a.id, new_rut: '251709563' }
+                        },
+                        meta: { athlete_id: a.id }
+                    });
+                }
+            }
+            if (a.id === 122 || (a.first_name.includes('Karla') && a.last_name.includes('Conejeros'))) {
+                if (cRut === '26918146') {
+                    alerts.push({
+                        id: `rut-fix-karla-${a.id}`,
+                        type: 'RUT',
+                        severity: 'CRITICAL',
+                        title: `Dígito Verificador Faltante: Karla Constanza Conejeros Soto`,
+                        subtitle: `${a.category} • RUT actual: 26918146`,
+                        description: `El RUT guardado no tiene el dígito verificador. Su RUT oficial según el Formulario de Ingreso es 26.918.146-K.`,
+                        suggestion: `Actualizar con el dígito verificador 'K'.`,
+                        quick_fix: {
+                            action: 'fix_rut',
+                            label: 'Corregir a 26.918.146-K',
+                            payload: { athlete_id: a.id, new_rut: '26918146K' }
+                        },
+                        meta: { athlete_id: a.id }
+                    });
+                }
+            }
+        });
+
+        // --- ALERTA 2: INCONSISTENCIAS DE EDAD VS CATEGORÍA ---
+        const ageChecks = [
+            {
+                name: 'Isabella Andrea Aguilera Sandoval',
+                birthDate: '2016-09-22',
+                currentCat: 'U13 Damas F',
+                suggestedCat: 'Mini Vóley / U10',
+                age: 10,
+                desc: 'Tiene 10 años (nació el 22-09-2016). Figura en U13 Damas F pagando arancel de $50.000 cuando por edad le corresponde Mini Vóley ($36.000).'
+            },
+            {
+                name: 'Anastasia Catalina Toledo Bello',
+                birthDate: '2017-09-29',
+                currentCat: 'U12 Damas F',
+                suggestedCat: 'Mini Vóley / U10',
+                age: 9,
+                desc: 'Tiene 9 años (nació el 29-09-2017). Figura en U12 Damas F pagando $50.000 cuando por edad corresponde Mini Vóley ($36.000).'
+            }
+        ];
+
+        ageChecks.forEach(ac => {
+            const matchAth = athletes.find(a => cleanStr(a.full_name).includes(cleanStr(ac.name)));
+            if (matchAth) {
+                alerts.push({
+                    id: `age-mismatch-${matchAth.id}`,
+                    type: 'EDAD',
+                    severity: 'WARNING',
+                    title: `Desajuste de Edad: ${matchAth.full_name} (${ac.age} años)`,
+                    subtitle: `Categoría actual: ${matchAth.category} ➔ Sugerida: ${ac.suggestedCat}`,
+                    description: ac.desc,
+                    suggestion: `Evaluar reasignar a ${ac.suggestedCat} o confirmar si entrena en categoría superior por decisión técnica.`,
+                    quick_fix: null,
+                    meta: { athlete_id: matchAth.id }
+                });
+            }
+        });
+
+        // --- ALERTA 3: TELÉFONOS DE CONTACTO Y RESCATE DE APODERADOS ---
+        athletes.forEach(a => {
+            if (a.status === 'ACTIVO') {
+                const hasOwnPhone = !!(a.phone && a.phone.trim());
+                const hasApoPhone = !!(a.apoderado_phone && a.apoderado_phone.trim());
+
+                if (!hasOwnPhone && !hasApoPhone) {
+                    alerts.push({
+                        id: `phone-none-${a.id}`,
+                        type: 'TELEFONO',
+                        severity: 'WARNING',
+                        title: `Sin Teléfono de Contacto: ${a.full_name}`,
+                        subtitle: `${a.category} • ${a.agrupacion}`,
+                        description: `El deportista no tiene registrado ningún número de celular (ni del alumno ni del apoderado).`,
+                        suggestion: `Solicitar número telefónico para permitir cobranza y avisos de entrenamientos.`,
+                        quick_fix: null,
+                        meta: { athlete_id: a.id }
+                    });
+                }
+            }
+        });
+
+        const phoneBackfills = [
+            { name: 'Martina Ignacia Asencio Hernandez', parent: 'Pamela Hernández (Mamá)', phone: '910137528' },
+            { name: 'Sofía Denise Cheuquemán Igor', parent: 'Abigail Igor (Mamá)', phone: '952335122' },
+            { name: 'Josefa Leonor Miranda Barria', parent: 'Argenis Tayl (Papá)', phone: '964645229' },
+            { name: 'Amanda Trinidad Pizarro Walther', parent: 'Sebastián Pizarro (Papá)', phone: '993214588' },
+            { name: 'Pascale Emilia Barria Subiabre', parent: 'Evadio Barría (Apoderado)', phone: '975685842' }
+        ];
+
+        phoneBackfills.forEach((pb, idx) => {
+            const matchAth = athletes.find(a => cleanStr(a.full_name).includes(cleanStr(pb.name)));
+            if (matchAth && (!matchAth.apoderado_phone || !matchAth.apoderado_phone.trim())) {
+                alerts.push({
+                    id: `phone-backfill-${idx}`,
+                    type: 'TELEFONO',
+                    severity: 'INFO',
+                    title: `Teléfono Rescatable: ${matchAth.full_name}`,
+                    subtitle: `Apoderado: ${pb.parent} • Celular: ${pb.phone}`,
+                    description: `El teléfono del apoderado está disponible en el Formulario de Ingreso pero no se ha cargado en la ficha del sistema.`,
+                    suggestion: `Guardar ${pb.phone} en la ficha del alumno para habilitar botón de WhatsApp.`,
+                    quick_fix: {
+                        action: 'backfill_phone',
+                        label: `Guardar ${pb.phone}`,
+                        payload: { athlete_id: matchAth.id, apoderado_phone: pb.phone }
+                    },
+                    meta: { athlete_id: matchAth.id, phone: pb.phone }
+                });
+            }
+        });
+
+        // --- ALERTA 4: MOVIMIENTOS POR ASIGNAR CON COINCIDENCIA FAMILIAR ---
+        const familyMatches = [
+            { payerName: 'PAMELA HERNANDEZ', studentName: 'Martina Ignacia Asencio Hernandez', concept: 'MENSUALIDAD', note: 'Madre del Formulario' },
+            { payerName: 'Argenis Guillermo Tayl', studentName: 'Josefa Leonor Miranda Barria', concept: 'MENSUALIDAD', note: 'Padre del Formulario' },
+            { payerName: 'ODONTOLOG', studentName: 'Amanda Trinidad Pizarro Walther', concept: 'MENSUALIDAD', note: 'Clínica de Apoderado Sebastián Pizarro' },
+            { payerName: 'EVADIO ALEJANDRO', studentName: 'Pascale Emilia Barria Subiabre', concept: 'MENSUALIDAD', note: 'Apoderado en Formulario' }
+        ];
+
+        movements.filter(m => !m.athlete_id || m.status === 'PENDIENTE').forEach(m => {
+            const pName = (m.payer_name || '').toUpperCase();
+            familyMatches.forEach(fm => {
+                if (pName.includes(fm.payerName.toUpperCase())) {
+                    const matchAth = athletes.find(a => cleanStr(a.full_name).includes(cleanStr(fm.studentName)));
+                    if (matchAth) {
+                        alerts.push({
+                            id: `mov-fam-match-${m.id}`,
+                            type: 'MOVIMIENTO',
+                            severity: 'INFO',
+                            title: `Match Familiar: Pago de $${cleanAmount(m.amount).toLocaleString('es-CL')} (${m.payer_name})`,
+                            subtitle: `Coincide con apoderado de: ${matchAth.full_name} (${matchAth.category})`,
+                            description: `Transferencia recibida de "${m.payer_name}" por $${cleanAmount(m.amount).toLocaleString('es-CL')} el día ${m.date}. La persona pagadora corresponde a ${fm.note} de ${matchAth.full_name}.`,
+                            suggestion: `Asignar directamente este pago a ${matchAth.full_name}.`,
+                            quick_fix: {
+                                action: 'assign_movement',
+                                label: `Asignar a ${matchAth.first_name}`,
+                                payload: { movement_id: m.id, athlete_id: matchAth.id, concept: fm.concept }
+                            },
+                            meta: { movement_id: m.id, athlete_id: matchAth.id }
+                        });
+                    }
+                }
+            });
+
+            if (pName.includes('CLUB DEPORTIVO VOLLEY VALDIVIA') || pName.includes('VALDIVIA')) {
+                alerts.push({
+                    id: `mov-institucional-${m.id}`,
+                    type: 'MOVIMIENTO',
+                    severity: 'WARNING',
+                    title: `Pago Institucional Externo: ${m.payer_name} ($${cleanAmount(m.amount).toLocaleString('es-CL')})`,
+                    subtitle: `Transferencia de Club Externo (no pertenece a un alumno particular)`,
+                    description: `Transferencia de $${cleanAmount(m.amount).toLocaleString('es-CL')} recibida desde el Club Deportivo Volley Valdivia por concepto de campeonato/torneo. No debe ser asignada a un niño.`,
+                    suggestion: `Clasificar como Campeonato / Inscripción Visita general.`,
+                    quick_fix: {
+                        action: 'reclassify_movement',
+                        label: 'Marcar como Campeonato',
+                        payload: { movement_id: m.id, new_concept: 'CAMPEONATO' }
+                    },
+                    meta: { movement_id: m.id }
+                });
+            }
+        });
+
+        // --- ALERTA 5: CAMPEONATOS CLASIFICADOS COMO MENSUALIDAD ---
+        movements.forEach(m => {
+            if (m.category_concept === 'MENSUALIDAD') {
+                const notesStr = `${m.notes || ''} ${m.payer_name || ''}`.toLowerCase();
+                const amt = parseFloat(m.amount) || 0;
+                const isChampionship = notesStr.includes('torneo') || notesStr.includes('camp') || notesStr.includes('liname') || notesStr.includes('copa') || notesStr.includes('team val');
+                if (isChampionship || (amt > 0 && amt <= 24000 && amt !== 17500)) {
+                    alerts.push({
+                        id: `champ-misclass-${m.id}`,
+                        type: 'MOVIMIENTO',
+                        severity: 'WARNING',
+                        title: `Posible Campeonato etiquetado como Mensualidad: $${cleanAmount(amt).toLocaleString('es-CL')}`,
+                        subtitle: `Alumno: ${m.athlete_name || 'Sin Asignar'} • Glosa: "${m.notes || '-'}"`,
+                        description: `El pago de $${cleanAmount(amt).toLocaleString('es-CL')} el ${m.date} tiene glosa o monto típico de campeonato/torneo ("${m.notes || ''}"), pero está contabilizado como Mensualidad, distorsionando la barra de cobranza.`,
+                        suggestion: `Reclasificar este pago a CAMPEONATO para mantener las mensualidades exactas.`,
+                        quick_fix: {
+                            action: 'reclassify_movement',
+                            label: 'Convertir a Campeonato',
+                            payload: { movement_id: m.id, new_concept: 'CAMPEONATO' }
+                        },
+                        meta: { movement_id: m.id }
+                    });
+                }
+            }
+        });
+
+        // --- ALERTA 6: ALUMNO EN PLANILLA VALE NO REGISTRADO EN BD ---
+        const missingAthletes = [
+            {
+                name: 'Josue David Perez Chacón',
+                category: 'TC Varones M',
+                monthly_fee: 35000,
+                notes: 'Figura en hoja COBRANZA VALE con deuda Ago-Sept pero no existía en la base de datos de alumnos.'
+            }
+        ];
+
+        missingAthletes.forEach((ma, idx) => {
+            const exists = athletes.find(a => cleanStr(a.full_name).includes(cleanStr(ma.name)));
+            if (!exists) {
+                alerts.push({
+                    id: `missing-ath-${idx}`,
+                    type: 'ALUMNO_FALTANTE',
+                    severity: 'CRITICAL',
+                    title: `Deportista en Planilla no creado en Base de Datos: ${ma.name}`,
+                    subtitle: `${ma.category} • Cuota: $35.000`,
+                    description: ma.notes,
+                    suggestion: `Dar de alta al alumno en el sistema para asignarle su deuda y registrar sus pagos.`,
+                    quick_fix: {
+                        action: 'create_missing_athlete',
+                        label: `Dar de alta a ${ma.name}`,
+                        payload: {
+                            first_name: 'Josue David',
+                            last_name: 'Perez Chacón',
+                            category: ma.category,
+                            monthly_fee: ma.monthly_fee,
+                            notes: ma.notes
+                        }
+                    },
+                    meta: { athlete_name: ma.name }
+                });
+            }
+        });
+
+        // --- ALERTA 7: APODERADOS CON MÚLTIPLES HIJOS (MONITOREO) ---
+        const multiPayerMap = new Map();
+        athletes.forEach(a => {
+            (a.payer_ruts || []).forEach(r => {
+                const cRut = cleanRut(r.payer_rut);
+                if (!cRut) return;
+                if (!multiPayerMap.has(cRut)) {
+                    multiPayerMap.set(cRut, {
+                        rut: formatRut(cRut),
+                        payer_name: r.payer_name || 'Desconocido',
+                        athletes: []
+                    });
+                }
+                const entry = multiPayerMap.get(cRut);
+                if (!entry.athletes.find(x => x.id === a.id)) {
+                    entry.athletes.push({ id: a.id, name: a.full_name, category: a.category });
+                }
+            });
+        });
+
+        for (const [cRut, data] of multiPayerMap.entries()) {
+            if (data.athletes.length > 1) {
+                const names = data.athletes.map(x => `${x.name} (${x.category})`).join(', ');
+                alerts.push({
+                    id: `multi-payer-${cRut}`,
+                    type: 'MULTI_PAGADOR',
+                    severity: 'MONITOR',
+                    title: `Apoderado con Múltiples Alumnos: ${data.payer_name}`,
+                    subtitle: `RUT: ${data.rut} • ${data.athletes.length} alumnos vinculados`,
+                    description: `Este pagador responde por ${data.athletes.length} deportistas: ${names}. Cuando transfiera, el sistema solicitará confirmar a cuál de ellos imputar el pago o si se debe dividir.`,
+                    suggestion: `Monitoreo preventivo: verificar que las transferencias no se asignen por error a un solo hermano.`,
+                    quick_fix: null,
+                    meta: { payer_rut: data.rut, athletes: data.athletes }
+                });
+            }
+        }
+
+        // Resumen
+        const summary = {
+            total_alerts: alerts.length,
+            critical_count: alerts.filter(a => a.severity === 'CRITICAL').length,
+            warning_count: alerts.filter(a => a.severity === 'WARNING').length,
+            info_count: alerts.filter(a => a.severity === 'INFO').length,
+            monitor_count: alerts.filter(a => a.severity === 'MONITOR').length
+        };
+
+        res.json({
+            period: currentPeriod,
+            summary,
+            alerts
+        });
+    } catch (err) {
+        console.error('Error al generar auditoría integral:', err);
+        res.status(500).json({ error: 'Error al generar informe de auditoría', details: err.message });
+    }
+};
+
+// 13. Resolver / Aplicar Corrección Rápida desde Panel de Auditoría
+exports.quickFixAuditItem = async (req, res) => {
+    try {
+        const { action, payload } = req.body;
+        if (!action || !payload) {
+            return res.status(400).json({ error: 'Acción y datos requeridos' });
+        }
+
+        if (action === 'fix_rut') {
+            const { athlete_id, new_rut } = payload;
+            await pool.query('UPDATE athletes SET rut = $1 WHERE id = $2', [cleanRut(new_rut), athlete_id]);
+            return res.json({ success: true, message: `RUT actualizado correctamente a ${formatRut(new_rut)}` });
+        }
+
+        if (action === 'backfill_phone') {
+            const { athlete_id, apoderado_phone } = payload;
+            await pool.query('UPDATE athletes SET apoderado_phone = $1 WHERE id = $2', [apoderado_phone, athlete_id]);
+            return res.json({ success: true, message: 'Teléfono de contacto actualizado correctamente' });
+        }
+
+        if (action === 'reclassify_movement') {
+            const { movement_id, new_concept } = payload;
+            const targetConcept = new_concept || 'CAMPEONATO';
+            await pool.query('UPDATE bank_movements SET category_concept = $1, status = $2 WHERE id = $3', [targetConcept, 'CONCILIADO', movement_id]);
+            await pool.query(`
+                INSERT INTO payment_audit_logs (movement_id, action, amount, payer_name, payer_rut, concept_before, concept_after, notes)
+                VALUES ($1, 'EDICION', 0, 'Auditoría', '', 'MENSUALIDAD', $2, 'Reclasificado desde Panel de Auditoría')
+            `, [movement_id, targetConcept]).catch(() => {});
+            return res.json({ success: true, message: `Pago reclasificado exitosamente como ${targetConcept}` });
+        }
+
+        if (action === 'create_missing_athlete') {
+            const { first_name, last_name, category, monthly_fee, notes } = payload;
+            const ins = await pool.query(`
+                INSERT INTO athletes (first_name, last_name, category, monthly_fee, status, join_date, notes)
+                VALUES ($1, $2, $3, $4, 'ACTIVO', '2026-08-01', $5)
+                RETURNING *
+            `, [first_name, last_name, category || 'TC Varones M', monthly_fee || 35000, notes || 'Ingresado desde Hoja COBRANZA VALE']);
+            return res.json({ success: true, message: `Alumno ${first_name} ${last_name} dado de alta exitosamente`, athlete: ins.rows[0] });
+        }
+
+        if (action === 'assign_movement') {
+            const { movement_id, athlete_id, concept } = payload;
+            await pool.query(`
+                UPDATE bank_movements 
+                SET athlete_id = $1, category_concept = $2, status = 'CONCILIADO'
+                WHERE id = $3
+            `, [athlete_id, concept || 'MENSUALIDAD', movement_id]);
+            return res.json({ success: true, message: 'Movimiento asignado exitosamente al alumno' });
+        }
+
+        return res.status(400).json({ error: 'Acción no reconocida' });
+    } catch (e) {
+        console.error('Error en quickFixAuditItem:', e);
+        res.status(500).json({ error: 'Error al aplicar corrección', details: e.message });
     }
 };
 
