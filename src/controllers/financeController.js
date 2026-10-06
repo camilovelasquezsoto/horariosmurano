@@ -940,18 +940,18 @@ exports.processCartola = async (req, res) => {
             let status = 'PENDIENTE';
             let movementNotes = mov.concept || '';
 
-            // Regla estricta del club: Solo montos exactos de arancel (35.000, 36.000 o 50.000) son auto-mensualidad
-            const isStrictFeeAmount = (amt === 35000 || amt === 36000 || amt === 50000);
-
             if (matchedAthletes.length === 1) {
+                // Alumno reconocido: se asigna automáticamente a Pagos en estado CONCILIADO como POR_DEFINIR
                 const ath = matchedAthletes[0];
                 athleteId = ath.athlete_id;
-                status = 'PENDIENTE';
+                status = 'CONCILIADO';
+                categoryConcept = 'POR_DEFINIR';
                 matchedCount++;
             } else if (matchedAthletes.length > 1) {
-                // Múltiples deportistas vinculados al RUT: asignar el primer candidato pero marcar notas para definir con el botón
+                // Múltiples hermanos vinculados: asignar al primer candidato como POR_DEFINIR para rápida selección
                 athleteId = matchedAthletes[0].athlete_id;
-                status = 'PENDIENTE';
+                status = 'CONCILIADO';
+                categoryConcept = 'POR_DEFINIR';
                 matchedCount++;
                 const kidsNames = matchedAthletes.map(k => `${k.first_name} (${k.category} $${k.monthly_fee})`).join(' y ');
                 movementNotes = movementNotes ? `${movementNotes} | Apoderado de: ${kidsNames}.` : `Apoderado de: ${kidsNames}.`;
@@ -983,18 +983,24 @@ exports.processCartola = async (req, res) => {
                             athleteId = ath.id;
                             status = 'CONCILIADO';
                             matchedCount++;
-                            const fee = parseFloat(ath.monthly_fee) || 0;
-                            if (categoryConcept === 'POR_DEFINIR' && isStrictFeeAmount && Math.abs(amt - fee) < 1) {
-                                categoryConcept = 'MENSUALIDAD';
-                            }
-                            movementNotes = movementNotes ? `${movementNotes} | Asignado automáticamente por coincidencia estricta de nombre: ${ath.first_name} ${ath.last_name}` : `Asignado automáticamente por coincidencia estricta de nombre: ${ath.first_name} ${ath.last_name}`;
+                            categoryConcept = 'POR_DEFINIR';
+                            movementNotes = movementNotes ? `${movementNotes} | Asignado automáticamente por coincidencia de nombre: ${ath.first_name} ${ath.last_name}` : `Asignado automáticamente por coincidencia de nombre: ${ath.first_name} ${ath.last_name}`;
                         } else {
+                            athleteId = null;
+                            status = 'PENDIENTE';
+                            categoryConcept = 'POR_DEFINIR';
                             pendingCount++;
                         }
                     } else {
+                        athleteId = null;
+                        status = 'PENDIENTE';
+                        categoryConcept = 'POR_DEFINIR';
                         pendingCount++;
                     }
                 } else {
+                    athleteId = null;
+                    status = 'PENDIENTE';
+                    categoryConcept = 'POR_DEFINIR';
                     pendingCount++;
                 }
             }
@@ -1111,8 +1117,12 @@ exports.getMovements = async (req, res) => {
             params.push(period);
         }
         if (status) {
-            query += ` AND m.status = $${pIdx++}`;
-            params.push(status);
+            if (status === 'PENDIENTE') {
+                query += ` AND m.status = 'PENDIENTE' AND m.athlete_id IS NULL`;
+            } else {
+                query += ` AND m.status = $${pIdx++}`;
+                params.push(status);
+            }
         }
         if (athlete_id) {
             query += ` AND m.athlete_id = $${pIdx++}`;
@@ -1123,7 +1133,7 @@ exports.getMovements = async (req, res) => {
             params.push(req.query.concept);
         }
         if (req.query.only_extras === 'true') {
-            query += ` AND m.category_concept != 'MENSUALIDAD'`;
+            query += ` AND m.category_concept != 'MENSUALIDAD' AND (m.status = 'CONCILIADO' OR m.athlete_id IS NOT NULL)`;
         }
 
         query += ` ORDER BY m.date DESC, m.id DESC`;
@@ -1163,6 +1173,11 @@ async function ensureAuditTable() {
                 notes TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Regularizar movimientos que ya tienen alumno asignado pero quedaron como PENDIENTE
+            UPDATE bank_movements 
+            SET status = 'CONCILIADO' 
+            WHERE status = 'PENDIENTE' AND athlete_id IS NOT NULL;
         `);
         auditTableInitialized = true;
     } catch (e) {
@@ -1304,13 +1319,13 @@ exports.getSummary = async (req, res) => {
             WHERE period = $1 AND status = 'CONCILIADO' AND category_concept = 'MENSUALIDAD'
         `, [currentPeriod]);
 
-        // 3. Total recaudado por pagos extras y otros ingresos
+        // 3. Total recaudado por pagos extras y otros ingresos (incluye pagos con alumno asignado en revisión)
         const extrasRes = await pool.query(`
             SELECT 
                 COALESCE(SUM(amount), 0) as total_extras,
                 COUNT(*) as count_extras
             FROM bank_movements
-            WHERE period = $1 AND status = 'CONCILIADO' AND category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO'
+            WHERE period = $1 AND category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO' AND (status = 'CONCILIADO' OR athlete_id IS NOT NULL)
         `, [currentPeriod]);
 
         // 4. Desglose detallado de pagos extras por concepto
@@ -1320,18 +1335,18 @@ exports.getSummary = async (req, res) => {
                 COUNT(*) as count,
                 COALESCE(SUM(amount), 0) as total
             FROM bank_movements
-            WHERE period = $1 AND status = 'CONCILIADO' AND category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO'
+            WHERE period = $1 AND category_concept != 'MENSUALIDAD' AND category_concept != 'ANULADO' AND (status = 'CONCILIADO' OR athlete_id IS NOT NULL)
             GROUP BY category_concept
             ORDER BY total DESC
         `, [currentPeriod]);
 
-        // 5. Total movimientos pendientes de asignar
+        // 5. Total movimientos pendientes de asignar (estrictamente sin alumno reconocido)
         const pendingRes = await pool.query(`
             SELECT 
                 COUNT(*) as count_pendientes,
                 COALESCE(SUM(amount), 0) as total_monto_pendiente
             FROM bank_movements
-            WHERE period = $1 AND status = 'PENDIENTE'
+            WHERE period = $1 AND (status = 'PENDIENTE' OR athlete_id IS NULL) AND athlete_id IS NULL
         `, [currentPeriod]);
 
         // 6. Desglose por categoría (solo alumnos activos que hayan ingresado a la fecha)

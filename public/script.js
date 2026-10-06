@@ -1277,8 +1277,8 @@ async function loadFinanceData() {
         const pendRes = await fetch(`${API_BASE_URL}/finance/movements?period=${currentFinancePeriod}&status=PENDIENTE`);
         allFinancePendingMovements = await pendRes.json();
 
-        // Contar solo los que aún no están asignados o están por definir
-        const unassignedPending = allFinancePendingMovements.filter(m => !m.athlete_id || m.category_concept === 'POR_DEFINIR' || m.status === 'PENDIENTE');
+        // Contar solo los que realmente no tienen alumno asignado
+        const unassignedPending = allFinancePendingMovements.filter(m => !m.athlete_id);
         const badgePend = document.getElementById('f-pending-badge');
         if (badgePend) {
             badgePend.textContent = unassignedPending.length;
@@ -1288,12 +1288,12 @@ async function loadFinanceData() {
 
         filterPendingTable();
 
-        // 4. Cargar Pagos Extras y Otros Ingresos
+        // 4. Cargar Pagos (antes Pagos Extras)
         const extRes = await fetch(`${API_BASE_URL}/finance/movements?period=${currentFinancePeriod}&only_extras=true`);
         allFinanceExtrasMovements = await extRes.json();
 
-        // Solo los pagos que requieren revisión (sin alumno, por definir o en estado pendiente)
-        const unreviewedExtras = allFinanceExtrasMovements.filter(m => !m.athlete_id || m.category_concept === 'POR_DEFINIR' || m.status === 'PENDIENTE');
+        // Solo los pagos que requieren revisión (por definir o sin concepto confirmado)
+        const unreviewedExtras = allFinanceExtrasMovements.filter(m => m.category_concept === 'POR_DEFINIR' || !m.category_concept);
         const badgeExt = document.getElementById('f-extras-badge');
         if (badgeExt) {
             badgeExt.textContent = unreviewedExtras.length;
@@ -1686,6 +1686,9 @@ function filterPendingTable() {
     const amountFilter = document.getElementById('f-pending-amount-filter')?.value || 'TODOS';
 
     filteredPendingCache = allFinancePendingMovements.filter(m => {
+        // En Por Asignar SOLO deben estar pagos sin alumno reconocido
+        if (m.athlete_id) return false;
+
         // Filtro Concepto
         if (concept !== 'TODOS') {
             if (concept === 'CAMPEONATO') {
