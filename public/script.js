@@ -855,6 +855,247 @@ function formatCLP(amount) {
     }).format(val);
 }
 
+// ── UTILIDADES DE RUT, MONTOS Y CARTOLAS ──
+function cleanRut(rut) {
+    if (!rut) return '';
+    return rut.toString().trim().toUpperCase().replace(/[^0-9K]/g, '');
+}
+
+function formatRut(rut) {
+    const clean = cleanRut(rut);
+    if (clean.length < 2) return clean;
+    const dv = clean.slice(-1);
+    const body = clean.slice(0, -1);
+    let formatted = '';
+    let count = 0;
+    for (let i = body.length - 1; i >= 0; i--) {
+        formatted = body[i] + formatted;
+        count++;
+        if (count % 3 === 0 && i !== 0) formatted = '.' + formatted;
+    }
+    return `${formatted}-${dv}`;
+}
+
+function cleanAmount(val) {
+    if (!val && val !== 0) return 0;
+    if (typeof val === 'number') return Math.round(val);
+    let str = val.toString().trim().replace(/[$\s]/g, '');
+    if (!str) return 0;
+    const isNegative = str.startsWith('-');
+    if (isNegative) str = str.substring(1);
+
+    if (str.includes(',')) {
+        str = str.split(',')[0].replace(/\./g, '');
+    } else if (/\.\d{1,2}$/.test(str)) {
+        // Decimales flotantes de Python/Excel p.ej. "50000.0"
+        str = str.split('.')[0].replace(/\./g, '');
+    } else {
+        str = str.replace(/\./g, '');
+    }
+    const num = parseInt(str, 10) || 0;
+    return isNegative ? -num : num;
+}
+
+const MONTH_NAMES = {
+    1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL',
+    5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
+    9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+};
+
+function getPeriodFromDateStr(dateVal, fallbackPeriod) {
+    if (!dateVal) return fallbackPeriod || 'OCTUBRE-2026';
+    let month = null;
+    let year = null;
+
+    if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
+        const d = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+        month = d.getUTCMonth() + 1;
+        year = d.getUTCFullYear();
+    } else {
+        const s = dateVal.toString().trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+            const parts = s.split('-');
+            year = parts[0];
+            month = parseInt(parts[1], 10);
+        } else if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}/.test(s)) {
+            const parts = s.split(/[-/]/);
+            month = parseInt(parts[1], 10);
+            year = parts[2];
+        }
+    }
+
+    if (month && MONTH_NAMES[month] && year) {
+        return `${MONTH_NAMES[month]}-${year}`;
+    }
+    return fallbackPeriod || 'OCTUBRE-2026';
+}
+
+function decodeHtmlEntities(str) {
+    if (!str) return '';
+    return str
+        .replace(/H\s+eacute\s+ctor/gi, 'Héctor')
+        .replace(/&eacute;/gi, 'é')
+        .replace(/&aacute;/gi, 'á')
+        .replace(/&iacute;/gi, 'í')
+        .replace(/&oacute;/gi, 'ó')
+        .replace(/&uacute;/gi, 'ú')
+        .replace(/&ntilde;/gi, 'ñ')
+        .replace(/&Eacute;/gi, 'É')
+        .replace(/&Aacute;/gi, 'Á')
+        .replace(/&Iacute;/gi, 'Í')
+        .replace(/&Oacute;/gi, 'Ó')
+        .replace(/&Uacute;/gi, 'Ú')
+        .replace(/&Ntilde;/gi, 'Ñ')
+        .replace(/&amp;/gi, '&');
+}
+
+function parseScotiabankDesc(rawDesc) {
+    let desc = decodeHtmlEntities(rawDesc || '').trim();
+    let payerRut = '';
+    let payerName = desc;
+
+    const tefMatch = desc.match(/^TEF\s+([0-9Kk.-]+)\s*(.*)/i);
+    if (tefMatch) {
+        payerRut = cleanRut(tefMatch[1]);
+        payerName = tefMatch[2].trim() || desc;
+    } else if (desc.toUpperCase().startsWith('TRANSF. DE ')) {
+        payerName = desc.substring(10).trim();
+    } else if (desc.toUpperCase().startsWith('TRANSFERENCIA DE ')) {
+        payerName = desc.substring(17).trim();
+    }
+    return { payerRut, payerName, concept: desc };
+}
+
+function parseCsvText(text) {
+    if (!text || !text.trim()) return [];
+    const lines = text.trim().split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (lines.length === 0) return [];
+
+    const sample = lines.slice(0, 5).join('\n');
+    const countTab = (sample.match(/\t/g) || []).length;
+    const countSemi = (sample.match(/;/g) || []).length;
+    const countComma = (sample.match(/,/g) || []).length;
+
+    let delim = '\t';
+    if (countSemi > countTab && countSemi > countComma) delim = ';';
+    else if (countComma > countTab && countComma > countSemi) delim = ',';
+
+    return lines.map(line => {
+        if (delim === '\t') return line.split('\t').map(c => c.trim());
+        const parts = [];
+        let curr = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            if (char === '"') inQuotes = !inQuotes;
+            else if (char === delim && !inQuotes) {
+                parts.push(curr.trim());
+                curr = '';
+            } else {
+                curr += char;
+            }
+        }
+        parts.push(curr.trim());
+        return parts;
+    });
+}
+
+function parseCartolaRowsUnified(rows) {
+    if (!rows || rows.length === 0) return { movements: [], totalLeidos: 0, cargosDescartados: 0 };
+
+    let headerIdx = -1;
+    let isScotia = false;
+
+    for (let r = 0; r < Math.min(rows.length, 25); r++) {
+        const row = rows[r];
+        if (!row || !Array.isArray(row)) continue;
+        const rowStr = row.map(c => (c || '').toString().toLowerCase()).join(' ');
+
+        if (rowStr.includes('abonos') || rowStr.includes('cargos') || (rowStr.includes('fecha') && rowStr.includes('descripci'))) {
+            headerIdx = r;
+            isScotia = true;
+            break;
+        } else if (rowStr.includes('rut origen') || rowStr.includes('nombre origen')) {
+            headerIdx = r;
+            isScotia = false;
+            break;
+        }
+    }
+
+    const startIdx = headerIdx !== -1 ? headerIdx + 1 : 0;
+    const movements = [];
+    let totalLeidos = 0;
+    let cargosDescartados = 0;
+
+    for (let r = startIdx; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || !row[0]) continue;
+
+        const firstColStr = (row[0] || '').toString().trim().toLowerCase();
+        if (firstColStr === 'fecha' || firstColStr.includes('nombre empresa') || firstColStr.includes('número línea') || firstColStr.includes('saldo disponible')) {
+            continue;
+        }
+
+        totalLeidos++;
+        const rowLooksScotia = isScotia || (row[1] && typeof row[1] === 'string' && (row[1].startsWith('TEF') || row[1].startsWith('TRANSF') || row[1].startsWith('REDCOMPRA')));
+
+        if (rowLooksScotia) {
+            const dateVal = row[0];
+            const desc = (row[1] || '').toString();
+            const sucursal = (row[2] || '').toString().trim();
+            let doc = (row[3] !== undefined && row[3] !== null) ? row[3].toString().trim() : '';
+            if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+            if (doc === '0') doc = '';
+
+            const abonoAmt = cleanAmount(row[5]);
+            if (abonoAmt <= 0) {
+                cargosDescartados++;
+                continue;
+            }
+
+            const { payerRut, payerName, concept } = parseScotiabankDesc(desc);
+
+            movements.push({
+                date: (dateVal || '').toString().trim(),
+                transfer_type: 'TRANSFERENCIA',
+                account_dest: '',
+                payer_rut: payerRut,
+                payer_name: payerName,
+                bank_origin: sucursal ? ('Scotiabank (' + sucursal + ')') : 'Scotiabank',
+                account_origin: doc,
+                amount: abonoAmt,
+                concept: concept
+            });
+        } else {
+            let dateVal = row[0];
+            let rutRaw = row[3];
+            let payerName = row[4];
+            let amountRaw = row[7] || row[5] || row[1] || 0;
+            let bank = row[5] || '';
+            let conceptRaw = row[8] || '';
+
+            const clAmt = cleanAmount(amountRaw);
+            if (clAmt <= 0) {
+                cargosDescartados++;
+                continue;
+            }
+
+            movements.push({
+                date: (dateVal || '').toString().trim(),
+                transfer_type: (row[1] || 'TRANSFERENCIA').toString().trim(),
+                account_dest: (row[2] || '').toString().trim(),
+                payer_rut: cleanRut(rutRaw),
+                payer_name: (payerName || '').toString().trim(),
+                bank_origin: (bank || '').toString().trim(),
+                account_origin: (row[6] || '').toString().trim(),
+                amount: clAmt,
+                concept: (conceptRaw || '').toString().trim()
+            });
+        }
+    }
+    return { movements, totalLeidos, cargosDescartados };
+}
+
 // ── AUTENTICACIÓN Y SEGURIDAD MÓDULO FINANZAS (CLAVE: Vimaca1970) ──
 const FINANCE_MASTER_PIN = 'Vimaca1970';
 
@@ -3501,12 +3742,29 @@ function handleCartolaFile(event) {
         return;
     }
 
-    // Archivo Excel o CSV
+    // Si es archivo CSV
+    if (fileName.endsWith('.csv')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target.result;
+                const rows = parseCsvText(text);
+                processCartolaRows(rows);
+            } catch (err) {
+                console.error('Error leyendo CSV:', err);
+                toast('Error al leer el archivo CSV');
+            }
+        };
+        reader.readAsText(file);
+        return;
+    }
+
+    // Archivo Excel (.xlsx, .xls)
     const reader = new FileReader();
     reader.onload = (e) => {
         try {
             const data = new Uint8Array(e.target.result);
-            const workbook = XLSX.read(data, { type: 'array' });
+            const workbook = XLSX.read(data, { type: 'array', raw: true, cellDates: false });
             
             // Buscar hoja según período o primera
             let sheetName = workbook.SheetNames[0];
@@ -3515,11 +3773,11 @@ function handleCartolaFile(event) {
             if (matched) sheetName = matched;
 
             const sheet = workbook.Sheets[sheetName];
-            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
             processCartolaRows(rows);
         } catch (err) {
-            console.error('Error leyendo cartola:', err);
-            toast('Error al leer el archivo Excel/CSV');
+            console.error('Error leyendo cartola Excel:', err);
+            toast('Error al leer el archivo Excel');
         }
     };
     reader.readAsArrayBuffer(file);
@@ -3587,15 +3845,11 @@ function processScotiabankXML(xmlText) {
             return;
         }
 
-        let payerRut = '';
-        let payerName = m.desc || 'Desconocido';
-        const tefMatch = m.desc.match(/TEF\s+([0-9Kk.-]+)\s*(.*)/i);
-        if (tefMatch) {
-            payerRut = tefMatch[1].replace(/[^0-9Kk]/g, '').toUpperCase();
-            payerName = tefMatch[2].trim() || m.desc;
-        } else if (m.desc.toUpperCase().startsWith('TRANSF. DE ')) {
-            payerName = m.desc.substring(10).trim();
-        }
+        let doc = (m.doc || '').trim();
+        if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+        if (doc === '0') doc = '';
+
+        const { payerRut, payerName, concept } = parseScotiabankDesc(m.desc);
 
         parsedCartolaRows.push({
             date: m.fecha,
@@ -3604,15 +3858,37 @@ function processScotiabankXML(xmlText) {
             payer_rut: payerRut,
             payer_name: payerName,
             bank_origin: m.sucursal ? `Scotiabank (${m.sucursal})` : 'Scotiabank',
-            account_origin: m.doc || '',
+            account_origin: doc,
             amount: Math.round(amt),
-            concept: m.desc
+            concept: concept
         });
     });
 
     if (parsedCartolaRows.length === 0) {
-        return toast('No se encontraron abonos ni transferencias positivas en el archivo');
+        return toast('No se encontraron abonos ni transferencias a favor en el archivo');
     }
+
+    // Auto-detectar período predominante
+    const periodCounts = {};
+    parsedCartolaRows.forEach(m => {
+        const p = getPeriodFromDateStr(m.date);
+        if (p) periodCounts[p] = (periodCounts[p] || 0) + 1;
+    });
+    const dominantPeriod = Object.keys(periodCounts).sort((a, b) => periodCounts[b] - periodCounts[a])[0];
+    if (dominantPeriod) {
+        currentFinancePeriod = dominantPeriod;
+        const sel = document.getElementById('f-period-select');
+        if (sel) {
+            let opt = Array.from(sel.options).find(o => o.value === dominantPeriod);
+            if (!opt) {
+                opt = new Option(dominantPeriod, dominantPeriod);
+                sel.add(opt);
+            }
+            sel.value = dominantPeriod;
+        }
+    }
+
+    const totalMonto = parsedCartolaRows.reduce((acc, m) => acc + (m.amount || 0), 0);
 
     // Mostrar preview
     const previewBox = document.getElementById('cartola-preview-box');
@@ -3622,12 +3898,12 @@ function processScotiabankXML(xmlText) {
 
     if (previewBox && previewTbody) {
         previewBox.classList.remove('hidden');
-        previewTitle.textContent = `🏦 Últimos Movimientos Scotiabank (${parsedCartolaRows.length} abonos listos)`;
+        previewTitle.textContent = `🏦 Últimos Movimientos Scotiabank (${parsedCartolaRows.length} abonos listos para ${currentFinancePeriod})`;
         if (previewStats) {
-            previewStats.innerHTML = `Total leídos: <strong>${totalLeidos}</strong> | Egresos/salidas descartados: <strong style="color:var(--danger);">${cargosDescartados}</strong> | Abonos a conciliar: <strong style="color:var(--success);">${parsedCartolaRows.length}</strong>`;
+            previewStats.innerHTML = `Total leídos: <strong>${totalLeidos}</strong> | Egresos/salidas descartados: <strong style="color:var(--danger);">${cargosDescartados}</strong> | Abonos a conciliar: <strong style="color:var(--success);">${parsedCartolaRows.length}</strong> | Total recaudado: <strong style="color:var(--success);">${formatCLP(totalMonto)}</strong>`;
         }
 
-        previewTbody.innerHTML = parsedCartolaRows.slice(0, 12).map(m => `
+        previewTbody.innerHTML = parsedCartolaRows.slice(0, 15).map(m => `
             <tr>
                 <td style="white-space:nowrap;">${m.date}</td>
                 <td><code style="font-size:0.75rem; color:var(--text-muted);">${m.account_origin || '-'}</code></td>
@@ -3639,10 +3915,10 @@ function processScotiabankXML(xmlText) {
                 <td><span style="font-size:0.8rem; color:var(--text-muted);">${m.bank_origin}</span></td>
                 <td><strong style="color:var(--success); font-size:0.92rem;">${formatCLP(m.amount)}</strong></td>
             </tr>
-        `).join('') + (parsedCartolaRows.length > 12 ? `<tr><td colspan="6" style="text-align:center; color:var(--text-dim);">... y ${parsedCartolaRows.length - 12} abonos más</td></tr>` : '');
+        `).join('') + (parsedCartolaRows.length > 15 ? `<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:10px;">... y ${parsedCartolaRows.length - 15} abonos más</td></tr>` : '');
     }
 
-    toast(`🏦 ${parsedCartolaRows.length} abonos de Scotiabank listos para conciliar (se omitirán duplicados automáticamente)`);
+    toast(`🏦 ${parsedCartolaRows.length} abonos de Scotiabank listos para conciliar en ${currentFinancePeriod}`);
 }
 
 function handlePasteCartola() {
@@ -3654,66 +3930,44 @@ function handlePasteCartola() {
         return processScotiabankXML(text);
     }
 
-    const lines = text.trim().split('\n');
-    const rows = lines.map(l => l.split('\t').length > 1 ? l.split('\t') : l.split(';'));
+    const rows = parseCsvText(text);
+    if (rows.length === 0) return toast('El texto pegado no contiene filas válidas');
     processCartolaRows(rows);
 }
 
 function processCartolaRows(rows) {
     if (!rows || rows.length === 0) return toast('La cartola está vacía');
 
-    // Buscar encabezado
-    let headerIdx = -1;
-    for (let r = 0; r < Math.min(rows.length, 15); r++) {
-        const rowStr = (rows[r] || []).join(' ').toLowerCase();
-        if (rowStr.includes('fecha') || rowStr.includes('rut')) {
-            headerIdx = r;
-            break;
+    const result = parseCartolaRowsUnified(rows);
+    const { movements, totalLeidos, cargosDescartados } = result;
+
+    if (!movements || movements.length === 0) {
+        return toast('No se encontraron abonos ni transferencias a favor en la cartola');
+    }
+
+    parsedCartolaRows = movements;
+
+    // Auto-detectar período predominante de los movimientos
+    const periodCounts = {};
+    parsedCartolaRows.forEach(m => {
+        const p = getPeriodFromDateStr(m.date);
+        if (p) periodCounts[p] = (periodCounts[p] || 0) + 1;
+    });
+    const dominantPeriod = Object.keys(periodCounts).sort((a, b) => periodCounts[b] - periodCounts[a])[0];
+    if (dominantPeriod) {
+        currentFinancePeriod = dominantPeriod;
+        const sel = document.getElementById('f-period-select');
+        if (sel) {
+            let opt = Array.from(sel.options).find(o => o.value === dominantPeriod);
+            if (!opt) {
+                opt = new Option(dominantPeriod, dominantPeriod);
+                sel.add(opt);
+            }
+            sel.value = dominantPeriod;
         }
     }
 
-    const startIdx = headerIdx !== -1 ? headerIdx + 1 : 0;
-    parsedCartolaRows = [];
-
-    for (let r = startIdx; r < rows.length; r++) {
-        const row = rows[r];
-        if (!row || !row[0]) continue;
-
-        let date = row[0];
-        let rut = row[3] || '';
-        let name = row[4] || '';
-        let amount = row[7] || row[5] || row[1] || 0;
-        let bank = row[5] || '';
-        let concept = row[8] || '';
-
-        // Limpiar monto
-        let cleanAmt = 0;
-        if (typeof amount === 'number') cleanAmt = Math.round(amount);
-        else {
-            let s = amount.toString().replace(/[$\s]/g, '');
-            if (s.includes(',')) s = s.split(',')[0];
-            s = s.replace(/\./g, '');
-            cleanAmt = parseInt(s, 10) || 0;
-        }
-
-        if (cleanAmt > 0) {
-            parsedCartolaRows.push({
-                date: date.toString().trim(),
-                transfer_type: (row[1] || 'TRANSFERENCIA').toString().trim(),
-                account_dest: (row[2] || '').toString().trim(),
-                payer_rut: rut.toString().replace(/[^0-9Kk]/g, '').toUpperCase(),
-                payer_name: name.toString().trim(),
-                bank_origin: bank.toString().trim(),
-                account_origin: (row[6] || '').toString().trim(),
-                amount: cleanAmt,
-                concept: concept.toString().trim()
-            });
-        }
-    }
-
-    if (parsedCartolaRows.length === 0) {
-        return toast('No se encontraron movimientos válidos en la cartola');
-    }
+    const totalMonto = parsedCartolaRows.reduce((acc, m) => acc + (m.amount || 0), 0);
 
     // Mostrar preview
     const previewBox = document.getElementById('cartola-preview-box');
@@ -3723,24 +3977,27 @@ function processCartolaRows(rows) {
 
     if (previewBox && previewTbody) {
         previewBox.classList.remove('hidden');
-        previewTitle.textContent = `📋 Vista previa (${parsedCartolaRows.length} movimientos detectados para ${currentFinancePeriod})`;
+        previewTitle.textContent = `📋 Vista previa (${parsedCartolaRows.length} abonos detectados para ${currentFinancePeriod})`;
         if (previewStats) {
-            previewStats.innerHTML = `Movimientos a conciliar: <strong style="color:var(--success);">${parsedCartolaRows.length}</strong>`;
+            previewStats.innerHTML = `Total leídos: <strong>${totalLeidos}</strong> | Egresos/cargos descartados: <strong style="color:var(--danger);">${cargosDescartados}</strong> | Abonos a conciliar: <strong style="color:var(--success);">${parsedCartolaRows.length}</strong> | Total recaudado: <strong style="color:var(--success);">${formatCLP(totalMonto)}</strong>`;
         }
 
-        previewTbody.innerHTML = parsedCartolaRows.slice(0, 10).map(m => `
+        previewTbody.innerHTML = parsedCartolaRows.slice(0, 15).map(m => `
             <tr>
                 <td style="white-space:nowrap;">${m.date}</td>
                 <td><code style="font-size:0.75rem; color:var(--text-muted);">${m.account_origin || '-'}</code></td>
-                <td><code>${m.payer_rut ? formatRut(m.payer_rut) : 'Sin RUT'}</code></td>
-                <td>${m.payer_name || 'Sin nombre'}</td>
-                <td>${m.bank_origin || '-'}</td>
-                <td><strong style="color:var(--success);">${formatCLP(m.amount)}</strong></td>
+                <td><code style="color:var(--accent-light); font-weight:700;">${m.payer_rut ? formatRut(m.payer_rut) : '<span style="color:#888;">Sin RUT</span>'}</code></td>
+                <td>
+                    <strong style="color:var(--text);">${m.payer_name || 'Desconocido'}</strong>
+                    ${m.payer_rut ? '' : '<small style="color:#ffab00; display:block; font-size:0.72rem;">⚡ Transf. interna Scotiabank</small>'}
+                </td>
+                <td><span style="font-size:0.8rem; color:var(--text-muted);">${m.bank_origin || '-'}</span></td>
+                <td><strong style="color:var(--success); font-size:0.92rem;">${formatCLP(m.amount)}</strong></td>
             </tr>
-        `).join('') + (parsedCartolaRows.length > 10 ? `<tr><td colspan="6" style="text-align:center; color:var(--text-dim);">... y ${parsedCartolaRows.length - 10} movimientos más</td></tr>` : '');
+        `).join('') + (parsedCartolaRows.length > 15 ? `<tr><td colspan="6" style="text-align:center; color:var(--text-dim); padding:10px;">... y ${parsedCartolaRows.length - 15} abonos más</td></tr>` : '');
     }
 
-    toast(`✅ ${parsedCartolaRows.length} movimientos listos para conciliar`);
+    toast(`✅ ${parsedCartolaRows.length} abonos listos para conciliar en ${currentFinancePeriod}`);
 }
 
 async function executeCartolaReconciliation() {

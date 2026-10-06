@@ -43,9 +43,20 @@ function cleanAmount(val) {
     if (!val && val !== 0) return 0;
     if (typeof val === 'number') return Math.round(val);
     let str = val.toString().trim().replace(/[$\s]/g, '');
-    if (str.includes(',')) str = str.split(',')[0];
-    str = str.replace(/\./g, '');
-    return parseInt(str, 10) || 0;
+    if (!str) return 0;
+    const isNegative = str.startsWith('-');
+    if (isNegative) str = str.substring(1);
+
+    if (str.includes(',')) {
+        str = str.split(',')[0].replace(/\./g, '');
+    } else if (/\.\d{1,2}$/.test(str)) {
+        // Valores con decimales flotantes desde Excel/Python p.ej. "50000.0" o "50000.00"
+        str = str.split('.')[0].replace(/\./g, '');
+    } else {
+        str = str.replace(/\./g, '');
+    }
+    const num = parseInt(str, 10) || 0;
+    return isNegative ? -num : num;
 }
 
 // 1. Obtener lista de deportistas con sus RUTs asociados y estado de pago del mes
@@ -518,6 +529,203 @@ exports.lookupPayerRut = async (req, res) => {
     }
 };
 
+// Helper para nombres de meses y detección de período
+const MONTH_NAMES = {
+    1: 'ENERO', 2: 'FEBRERO', 3: 'MARZO', 4: 'ABRIL',
+    5: 'MAYO', 6: 'JUNIO', 7: 'JULIO', 8: 'AGOSTO',
+    9: 'SEPTIEMBRE', 10: 'OCTUBRE', 11: 'NOVIEMBRE', 12: 'DICIEMBRE'
+};
+
+function getPeriodFromDate(dateVal, fallbackPeriod) {
+    if (!dateVal) return fallbackPeriod || 'OCTUBRE-2026';
+    let month = null;
+    let year = null;
+
+    if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
+        const d = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+        month = d.getUTCMonth() + 1;
+        year = d.getUTCFullYear();
+    } else {
+        const s = dateVal.toString().trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+            const parts = s.split('-');
+            year = parts[0];
+            month = parseInt(parts[1], 10);
+        } else if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}/.test(s)) {
+            const parts = s.split(/[-/]/);
+            month = parseInt(parts[1], 10);
+            year = parts[2];
+        }
+    }
+
+    if (month && MONTH_NAMES[month] && year) {
+        return `${MONTH_NAMES[month]}-${year}`;
+    }
+    return fallbackPeriod || 'OCTUBRE-2026';
+}
+
+function normalizeDateStr(dateVal) {
+    if (!dateVal) return '';
+    if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
+        const d = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    }
+    const cleanDate = dateVal.toString().trim();
+    if (cleanDate.includes('-')) {
+        const parts = cleanDate.split('-');
+        if (parts.length === 3) {
+            if (parts[0].length === 4) return cleanDate;
+            if (parts[0].length <= 2) {
+                return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+        }
+    } else if (cleanDate.includes('/')) {
+        const parts = cleanDate.split('/');
+        if (parts.length === 3) {
+            if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+            if (parts[0].length <= 2) {
+                return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+        }
+    }
+    return cleanDate;
+}
+
+function decodeHtmlEntities(str) {
+    if (!str) return '';
+    return str
+        .replace(/H\s+eacute\s+ctor/gi, 'Héctor')
+        .replace(/&eacute;/gi, 'é')
+        .replace(/&aacute;/gi, 'á')
+        .replace(/&iacute;/gi, 'í')
+        .replace(/&oacute;/gi, 'ó')
+        .replace(/&uacute;/gi, 'ú')
+        .replace(/&ntilde;/gi, 'ñ')
+        .replace(/&Eacute;/gi, 'É')
+        .replace(/&Aacute;/gi, 'Á')
+        .replace(/&Iacute;/gi, 'Í')
+        .replace(/&Oacute;/gi, 'Ó')
+        .replace(/&Uacute;/gi, 'Ú')
+        .replace(/&Ntilde;/gi, 'Ñ')
+        .replace(/&amp;/gi, '&');
+}
+
+function parseScotiabankDesc(rawDesc) {
+    let desc = decodeHtmlEntities(rawDesc || '').trim();
+    let payerRut = '';
+    let payerName = desc;
+
+    const tefMatch = desc.match(/^TEF\s+([0-9Kk.-]+)\s*(.*)/i);
+    if (tefMatch) {
+        payerRut = cleanRut(tefMatch[1]);
+        payerName = tefMatch[2].trim() || desc;
+    } else if (desc.toUpperCase().startsWith('TRANSF. DE ')) {
+        payerName = desc.substring(10).trim();
+    } else if (desc.toUpperCase().startsWith('TRANSFERENCIA DE ')) {
+        payerName = desc.substring(17).trim();
+    }
+    return { payerRut, payerName, concept: desc };
+}
+
+function parseCartolaRowsUnified(rows) {
+    if (!rows || rows.length === 0) return { movements: [], totalLeidos: 0, cargosDescartados: 0 };
+
+    let headerIdx = -1;
+    let isScotia = false;
+
+    for (let r = 0; r < Math.min(rows.length, 25); r++) {
+        const row = rows[r];
+        if (!row || !Array.isArray(row)) continue;
+        const rowStr = row.map(c => (c || '').toString().toLowerCase()).join(' ');
+
+        if (rowStr.includes('abonos') || rowStr.includes('cargos') || (rowStr.includes('fecha') && rowStr.includes('descripci'))) {
+            headerIdx = r;
+            isScotia = true;
+            break;
+        } else if (rowStr.includes('rut origen') || rowStr.includes('nombre origen')) {
+            headerIdx = r;
+            isScotia = false;
+            break;
+        }
+    }
+
+    const startIdx = headerIdx !== -1 ? headerIdx + 1 : 0;
+    const movements = [];
+    let totalLeidos = 0;
+    let cargosDescartados = 0;
+
+    for (let r = startIdx; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || !row[0]) continue;
+
+        const firstColStr = (row[0] || '').toString().trim().toLowerCase();
+        if (firstColStr === 'fecha' || firstColStr.includes('nombre empresa') || firstColStr.includes('número línea') || firstColStr.includes('saldo disponible')) {
+            continue;
+        }
+
+        totalLeidos++;
+        const rowLooksScotia = isScotia || (row[1] && typeof row[1] === 'string' && (row[1].startsWith('TEF') || row[1].startsWith('TRANSF') || row[1].startsWith('REDCOMPRA')));
+
+        if (rowLooksScotia) {
+            const dateVal = row[0];
+            const desc = (row[1] || '').toString();
+            const sucursal = (row[2] || '').toString().trim();
+            let doc = (row[3] !== undefined && row[3] !== null) ? row[3].toString().trim() : '';
+            if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+            if (doc === '0') doc = '';
+
+            const abonoAmt = cleanAmount(row[5]);
+            if (abonoAmt <= 0) {
+                cargosDescartados++;
+                continue;
+            }
+
+            const { payerRut, payerName, concept } = parseScotiabankDesc(desc);
+
+            movements.push({
+                date: (dateVal || '').toString().trim(),
+                transfer_type: 'TRANSFERENCIA',
+                account_dest: '',
+                payer_rut: payerRut,
+                payer_name: payerName,
+                bank_origin: sucursal ? ('Scotiabank (' + sucursal + ')') : 'Scotiabank',
+                account_origin: doc,
+                amount: abonoAmt,
+                concept: concept
+            });
+        } else {
+            let dateVal = row[0];
+            let rutRaw = row[3];
+            let payerName = row[4];
+            let amountRaw = row[7] || row[5] || row[1] || 0;
+            let bank = row[5] || '';
+            let conceptRaw = row[8] || '';
+
+            const clAmt = cleanAmount(amountRaw);
+            if (clAmt <= 0) {
+                cargosDescartados++;
+                continue;
+            }
+
+            movements.push({
+                date: (dateVal || '').toString().trim(),
+                transfer_type: (row[1] || 'TRANSFERENCIA').toString().trim(),
+                account_dest: (row[2] || '').toString().trim(),
+                payer_rut: cleanRut(rutRaw),
+                payer_name: (payerName || '').toString().trim(),
+                bank_origin: (bank || '').toString().trim(),
+                account_origin: (row[6] || '').toString().trim(),
+                amount: clAmt,
+                concept: (conceptRaw || '').toString().trim()
+            });
+        }
+    }
+    return { movements, totalLeidos, cargosDescartados };
+}
+
 // Helper para parsear XML de Scotiabank (typeDesc)
 function parseScotiabankXML(xmlString) {
     const regex = /<movimiento>(.*?)<\/movimiento>/gs;
@@ -538,18 +746,12 @@ function parseScotiabankXML(xmlString) {
 
         const fecha = getTag('fecha_movimiento'); // DD-MM-YYYY
         const desc = getTag('descripcion');
-        const doc = getTag('documento_numero');
+        let doc = getTag('documento_numero');
+        if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+        if (doc === '0') doc = '';
         const sucursal = getTag('sucursal');
 
-        let payerRut = '';
-        let payerName = desc;
-        const tefMatch = desc.match(/TEF\s+([0-9Kk.-]+)\s*(.*)/i);
-        if (tefMatch) {
-            payerRut = cleanRut(tefMatch[1]);
-            payerName = tefMatch[2].trim() || desc;
-        } else if (desc.toUpperCase().startsWith('TRANSF. DE ')) {
-            payerName = desc.substring(10).trim();
-        }
+        const { payerRut, payerName, concept } = parseScotiabankDesc(desc);
 
         movements.push({
             date: fecha,
@@ -558,9 +760,9 @@ function parseScotiabankXML(xmlString) {
             payer_rut: payerRut,
             payer_name: payerName,
             bank_origin: sucursal ? `Scotiabank (${sucursal})` : 'Scotiabank',
-            account_origin: (doc || '').trim(),
+            account_origin: doc,
             amount: Math.round(amt),
-            concept: desc
+            concept: concept
         });
     }
     return movements;
@@ -571,7 +773,7 @@ exports.processCartola = async (req, res) => {
     try {
         let movements = [];
         const { period } = req.body;
-        const currentPeriod = period || 'SEPTIEMBRE-2026';
+        let currentPeriod = period || 'SEPTIEMBRE-2026';
 
         if (req.file) {
             const fileStr = req.file.buffer.toString('utf8');
@@ -580,67 +782,50 @@ exports.processCartola = async (req, res) => {
                 movements = parseScotiabankXML(fileStr);
             } else {
                 // Se subió un archivo Excel o CSV
-                const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+                const workbook = xlsx.read(req.file.buffer, { type: 'buffer', raw: true, cellDates: false });
                 let sheetName = workbook.SheetNames[0];
                 if (currentPeriod) {
                     const pUpper = currentPeriod.toUpperCase();
                     const matchedSheet = workbook.SheetNames.find(s => pUpper.includes(s.toUpperCase()) || s.toUpperCase().includes(pUpper.split('-')[0]));
                     if (matchedSheet) sheetName = matchedSheet;
                 }
-                const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-
-                // Buscar fila encabezado
-                let headerIdx = -1;
-                for (let r = 0; r < Math.min(rows.length, 15); r++) {
-                    if (rows[r] && (rows[r][0] === 'Fecha' || rows[r][3] === 'Rut Origen')) {
-                        headerIdx = r;
-                        break;
-                    }
-                }
-
-                const startIdx = headerIdx !== -1 ? headerIdx + 1 : 0;
-                for (let r = startIdx; r < rows.length; r++) {
-                    const row = rows[r];
-                    if (!row || !row[0]) continue;
-
-                    let dateVal = row[0];
-                    let rutRaw = row[3];
-                    let payerName = row[4];
-                    let amountRaw = row[7] || 0;
-                    let conceptRaw = row[8] || '';
-
-                    const clAmt = cleanAmount(amountRaw);
-                    if (clAmt <= 0) continue; // Descartar salidas
-
-                    movements.push({
-                        date: dateVal,
-                        transfer_type: (row[1] || 'TRANSFERENCIA').toString().trim(),
-                        account_dest: (row[2] || '').toString().trim(),
-                        payer_rut: cleanRut(rutRaw),
-                        payer_name: (payerName || '').toString().trim(),
-                        bank_origin: (row[5] || '').toString().trim(),
-                        account_origin: (row[6] || '').toString().trim(),
-                        amount: clAmt,
-                        concept: (conceptRaw || '').toString().trim()
-                    });
-                }
+                const rows = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: true });
+                const parsed = parseCartolaRowsUnified(rows);
+                movements = parsed.movements;
             }
         } else if (Array.isArray(req.body.movements)) {
             movements = req.body.movements
                 .filter(m => cleanAmount(m.amount) > 0)
-                .map(m => ({
-                    date: m.date,
-                    transfer_type: m.transfer_type || 'TRANSFERENCIA',
-                    account_dest: m.account_dest || '',
-                    payer_rut: cleanRut(m.payer_rut),
-                    payer_name: (m.payer_name || '').trim(),
-                    bank_origin: m.bank_origin || '',
-                    account_origin: (m.account_origin || '').trim(),
-                    amount: cleanAmount(m.amount),
-                    concept: m.concept || ''
-                }));
+                .map(m => {
+                    let doc = (m.account_origin || '').trim();
+                    if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+                    if (doc === '0') doc = '';
+                    return {
+                        date: m.date,
+                        transfer_type: m.transfer_type || 'TRANSFERENCIA',
+                        account_dest: m.account_dest || '',
+                        payer_rut: cleanRut(m.payer_rut),
+                        payer_name: (m.payer_name || '').trim(),
+                        bank_origin: m.bank_origin || '',
+                        account_origin: doc,
+                        amount: cleanAmount(m.amount),
+                        concept: m.concept || '',
+                        period: m.period
+                    };
+                });
         } else {
             return res.status(400).json({ error: 'No se enviaron movimientos ni archivo' });
+        }
+
+        // Auto-detectar período predominante si las fechas corresponden a otro mes
+        const periodCounts = {};
+        movements.forEach(m => {
+            const p = m.period || getPeriodFromDate(m.date, currentPeriod);
+            if (p) periodCounts[p] = (periodCounts[p] || 0) + 1;
+        });
+        const dominantPeriod = Object.keys(periodCounts).sort((a, b) => periodCounts[b] - periodCounts[a])[0];
+        if (dominantPeriod) {
+            currentPeriod = dominantPeriod;
         }
 
         // Obtener todos los RUTs vinculados en memoria con categorías y aranceles para match instantáneo
@@ -679,64 +864,51 @@ exports.processCartola = async (req, res) => {
             const amt = Math.round(cleanAmount(mov.amount));
             if (!amt || amt <= 0) continue;
 
-            // Normalizar fecha si viene en string dd-mm-aaaa o dd/mm/aaaa
-            let parsedDate = mov.date;
-            if (typeof mov.date === 'string') {
-                const cleanDate = mov.date.trim();
-                if (cleanDate.includes('-')) {
-                    const parts = cleanDate.split('-');
-                    if (parts.length === 3 && parts[0].length <= 2) {
-                        parsedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                    }
-                } else if (cleanDate.includes('/')) {
-                    const parts = cleanDate.split('/');
-                    if (parts.length === 3 && parts[0].length <= 2) {
-                        parsedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                    }
-                }
-            }
+            // Normalizar fecha
+            const parsedDate = normalizeDateStr(mov.date);
 
-            const doc = (mov.account_origin || '').trim();
+            let doc = (mov.account_origin || '').trim();
+            if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+            if (doc === '0') doc = '';
+
             const rut = cleanRut(mov.payer_rut);
             const payerNameClean = (mov.payer_name || '').trim().toLowerCase();
+            const hasValidDoc = doc && doc.length >= 5;
 
             // ── DEDUPLICACIÓN INTELIGENTE EN MEMORIA ──
             let isDuplicate = false;
 
-            // 1. Por documento/ref y monto (Scotiabank transaction doc / TEF ref)
-            if (doc && doc !== '') {
+            // 1. Si tiene N° Doc válido (>= 5 dígitos), deduplicar ESTRICTAMENTE por documento y monto
+            if (hasValidDoc) {
                 const docLower = doc.toLowerCase();
                 if (existingMovements.some(em => 
-                    Math.round(em.amount) === amt && (
-                        (em.account_origin && em.account_origin === doc) || 
-                        (em.notes_lower && em.notes_lower.includes(docLower))
-                    )
+                    (em.account_origin && em.account_origin === doc) || 
+                    (em.notes_lower && em.notes_lower.includes(docLower))
                 )) {
                     isDuplicate = true;
                 }
-            }
-
-            // 2. Por fecha, monto y RUT del pagador
-            if (!isDuplicate && rut && rut !== '') {
-                if (existingMovements.some(em => 
-                    Math.round(em.amount) === amt && 
-                    em.date_str === parsedDate && 
-                    em.payer_rut === rut
-                )) {
-                    isDuplicate = true;
-                }
-            }
-
-            // 3. Por fecha, monto y nombre del pagador (útil para transferencias internas 'TRANSF. DE ...')
-            if (!isDuplicate && payerNameClean && payerNameClean.length > 3) {
-                if (existingMovements.some(em => 
-                    Math.round(em.amount) === amt && 
-                    em.date_str === parsedDate && (
-                        (em.payer_name && (em.payer_name.includes(payerNameClean) || payerNameClean.includes(em.payer_name))) ||
-                        (em.notes_lower && em.notes_lower.includes(payerNameClean))
-                    )
-                )) {
-                    isDuplicate = true;
+            } else {
+                // 2. Si NO tiene N° Doc válido (transferencias internas o genéricas), deduplicar por fecha, monto y RUT/nombre
+                if (rut && rut !== '') {
+                    if (existingMovements.some(em => 
+                        Math.round(em.amount) === amt && 
+                        em.date_str === parsedDate && 
+                        em.payer_rut === rut &&
+                        (!em.account_origin || em.account_origin === '0' || em.account_origin === '')
+                    )) {
+                        isDuplicate = true;
+                    }
+                } else if (payerNameClean && payerNameClean.length > 3) {
+                    if (existingMovements.some(em => 
+                        Math.round(em.amount) === amt && 
+                        em.date_str === parsedDate && (
+                            (em.payer_name && (em.payer_name.includes(payerNameClean) || payerNameClean.includes(em.payer_name))) ||
+                            (em.notes_lower && em.notes_lower.includes(payerNameClean))
+                        ) &&
+                        (!em.account_origin || em.account_origin === '0' || em.account_origin === '')
+                    )) {
+                        isDuplicate = true;
+                    }
                 }
             }
 
@@ -827,6 +999,8 @@ exports.processCartola = async (req, res) => {
                 }
             }
 
+            const movPeriod = mov.period || getPeriodFromDate(parsedDate, currentPeriod);
+
             // Guardar para inserción por lotes
             newRecordsToInsert.push({
                 date: parsedDate,
@@ -838,7 +1012,7 @@ exports.processCartola = async (req, res) => {
                 account_origin: doc,
                 amount: amt,
                 athlete_id: athleteId,
-                period: currentPeriod,
+                period: movPeriod,
                 category_concept: categoryConcept,
                 status: status,
                 notes: movementNotes
