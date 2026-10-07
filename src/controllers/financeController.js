@@ -828,6 +828,8 @@ exports.processCartola = async (req, res) => {
             currentPeriod = dominantPeriod;
         }
 
+        await ensureAuditTable();
+
         // Obtener todos los RUTs vinculados en memoria con categorías y aranceles para match instantáneo
         const rutsRes = await pool.query(`
             SELECT r.payer_rut, r.athlete_id, a.first_name, a.last_name, a.category, a.monthly_fee
@@ -839,9 +841,6 @@ exports.processCartola = async (req, res) => {
             if (!rutLookup.has(r.payer_rut)) rutLookup.set(r.payer_rut, []);
             rutLookup.get(r.payer_rut).push(r);
         });
-
-        const athletesRes = await pool.query(`SELECT id, first_name, last_name, category, monthly_fee FROM athletes`);
-        const allAthletes = athletesRes.rows;
 
         // Prefetch de movimientos existentes para deduplicación ultra rápida en memoria (sin N+1 queries)
         const existingRes = await pool.query(`
@@ -956,53 +955,13 @@ exports.processCartola = async (req, res) => {
                 const kidsNames = matchedAthletes.map(k => `${k.first_name} (${k.category} $${k.monthly_fee})`).join(' y ');
                 movementNotes = movementNotes ? `${movementNotes} | Apoderado de: ${kidsNames}.` : `Apoderado de: ${kidsNames}.`;
             } else {
-                // Si no hubo match por RUT, intentar match por nombre ULTRA ESTRICTO (solo coincidencias exactas de apellido + nombre)
-                const STOPWORDS = new Set(['de', 'del', 'la', 'las', 'los', 'san', 'santa', 'y', 'e', 'spa', 'ltda', 'sa', 'eirl']);
-                if (mov.payer_name && mov.payer_name.length > 5) {
-                    const normPayer = cleanStr(mov.payer_name);
-                    const payerTokens = normPayer.split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w));
-                    
-                    if (payerTokens.length >= 2) {
-                        const nameMatches = allAthletes.filter(a => {
-                            const athFirstTokens = cleanStr(a.first_name).split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w));
-                            const athLastTokens = cleanStr(a.last_name).split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w));
-                            
-                            // EXIGENCIA 1: Debe coincidir obligatoriamente al menos un apellido completo (exact word match)
-                            const surnameMatch = athLastTokens.some(alt => payerTokens.includes(alt));
-                            if (!surnameMatch) return false;
-
-                            // EXIGENCIA 2: Debe coincidir al menos un nombre o segundo apellido completo (exact word match)
-                            const firstNameOrSecondSurnameMatch = athFirstTokens.some(aft => payerTokens.includes(aft)) || 
-                                (athLastTokens.filter(alt => payerTokens.includes(alt)).length >= 2);
-                            
-                            return firstNameOrSecondSurnameMatch;
-                        });
-
-                        if (nameMatches.length === 1) {
-                            const ath = nameMatches[0];
-                            athleteId = ath.id;
-                            status = 'CONCILIADO';
-                            matchedCount++;
-                            categoryConcept = 'POR_DEFINIR';
-                            movementNotes = movementNotes ? `${movementNotes} | Asignado automáticamente por coincidencia de nombre: ${ath.first_name} ${ath.last_name}` : `Asignado automáticamente por coincidencia de nombre: ${ath.first_name} ${ath.last_name}`;
-                        } else {
-                            athleteId = null;
-                            status = 'PENDIENTE';
-                            categoryConcept = 'POR_DEFINIR';
-                            pendingCount++;
-                        }
-                    } else {
-                        athleteId = null;
-                        status = 'PENDIENTE';
-                        categoryConcept = 'POR_DEFINIR';
-                        pendingCount++;
-                    }
-                } else {
-                    athleteId = null;
-                    status = 'PENDIENTE';
-                    categoryConcept = 'POR_DEFINIR';
-                    pendingCount++;
-                }
+                // Sin coincidencia por RUT registrado:
+                // Estrictamente queda sin alumno asignado (athleteId = null) y en estado PENDIENTE ("Por Asignar")
+                // para que la tesorera lo asigne manualmente si corresponde.
+                // NO se realiza asignación automática por coincidencia de nombre para evitar falsas asociaciones.
+                athleteId = null;
+                status = 'PENDIENTE';
+                pendingCount++;
             }
 
             const movPeriod = mov.period || getPeriodFromDate(parsedDate, currentPeriod);
@@ -1081,6 +1040,7 @@ exports.processCartola = async (req, res) => {
 // 8. Obtener movimientos bancarios (con filtros: pendientes, conciliados, por período)
 exports.getMovements = async (req, res) => {
     try {
+        await ensureAuditTable();
         const { period, status, athlete_id } = req.query;
         let query = `
             SELECT 
@@ -1178,6 +1138,21 @@ async function ensureAuditTable() {
             UPDATE bank_movements 
             SET status = 'CONCILIADO' 
             WHERE status = 'PENDIENTE' AND athlete_id IS NOT NULL;
+
+            -- Limpieza preventiva: desasociar cualquier movimiento erróneamente vinculado por coincidencia de nombre
+            UPDATE bank_movements
+            SET athlete_id = NULL,
+                status = CASE WHEN category_concept IN ('ARRIENDO_GYM', 'ARRIENDO_CANCHA') THEN 'CONCILIADO' ELSE 'PENDIENTE' END,
+                notes = TRIM(REGEXP_REPLACE(notes, '\\|\\s*Asignado automáticamente.*$', '', 'i'))
+            WHERE notes ILIKE '%Asignado automáticamente por%nombre%'
+               OR notes ILIKE '%coincidencia de nombre%';
+
+            -- Asegurar que el pagador Luis Hernán Barría no tenga enlaces erróneos a alumnos
+            UPDATE bank_movements
+            SET athlete_id = NULL
+            WHERE payer_rut = '106789975' AND athlete_id IS NOT NULL;
+
+            DELETE FROM athlete_payer_ruts WHERE payer_rut = '106789975';
         `);
         auditTableInitialized = true;
     } catch (e) {
