@@ -878,7 +878,9 @@ function formatCLP(amount) {
 // ── UTILIDADES DE RUT, MONTOS Y CARTOLAS ──
 function cleanRut(rut) {
     if (!rut) return '';
-    return rut.toString().trim().toUpperCase().replace(/[^0-9K]/g, '');
+    let str = rut.toString().trim().toUpperCase();
+    if (str.endsWith('.0')) str = str.slice(0, -2);
+    return str.replace(/[^0-9K]/g, '');
 }
 
 function formatRut(rut) {
@@ -1038,7 +1040,7 @@ function parseCartolaRowsUnified(rows) {
             headerIdx = r;
             isScotia = true;
             break;
-        } else if (rowStr.includes('rut origen') || rowStr.includes('nombre origen')) {
+        } else if (rowStr.includes('rut origen') || rowStr.includes('nombre origen') || rowStr.includes('cta. abono')) {
             headerIdx = r;
             isScotia = false;
             break;
@@ -1060,7 +1062,9 @@ function parseCartolaRowsUnified(rows) {
         }
 
         totalLeidos++;
-        const rowLooksScotia = isScotia || (row[1] && typeof row[1] === 'string' && (row[1].startsWith('TEF') || row[1].startsWith('TRANSF') || row[1].startsWith('REDCOMPRA')));
+        const rowLooksScotia = headerIdx !== -1
+            ? isScotia
+            : (row[1] && typeof row[1] === 'string' && (row[1].startsWith('TEF') || (row[1].startsWith('TRANSF') && row.length < 8) || row[1].startsWith('REDCOMPRA')));
 
         if (rowLooksScotia) {
             const dateVal = row[0];
@@ -1103,6 +1107,9 @@ function parseCartolaRowsUnified(rows) {
                 continue;
             }
 
+            let doc = (row[6] !== undefined && row[6] !== null) ? row[6].toString().trim() : '';
+            if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+
             movements.push({
                 date: (dateVal || '').toString().trim(),
                 transfer_type: (row[1] || 'TRANSFERENCIA').toString().trim(),
@@ -1110,7 +1117,7 @@ function parseCartolaRowsUnified(rows) {
                 payer_rut: cleanRut(rutRaw),
                 payer_name: (payerName || '').toString().trim(),
                 bank_origin: (bank || '').toString().trim(),
-                account_origin: (row[6] || '').toString().trim(),
+                account_origin: doc,
                 amount: clAmt,
                 concept: (conceptRaw || '').toString().trim()
             });
