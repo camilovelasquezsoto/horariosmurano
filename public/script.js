@@ -823,7 +823,27 @@ async function renderFavorites() {
  * ══════════════════════════════════════════════════════════════════
  */
 
-let currentFinancePeriod = 'SEPTIEMBRE-2026';
+function getCurrentSystemPeriod() {
+    const months = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+    const now = new Date();
+    const month = months[now.getMonth()];
+    const year = now.getFullYear();
+    return `${month}-${year}`;
+}
+
+function syncFinancePeriodSelect(period) {
+    const sel = document.getElementById('f-period-select');
+    if (!sel) return;
+    const exists = Array.from(sel.options).some(o => o.value === period);
+    if (!exists) {
+        const parts = period.split('-');
+        const label = parts.length === 2 ? `${parts[0].charAt(0) + parts[0].slice(1).toLowerCase()} ${parts[1]}` : period;
+        sel.add(new Option(label, period), 0);
+    }
+    sel.value = period;
+}
+
+let currentFinancePeriod = getCurrentSystemPeriod();
 let currentFinanceStatusFilter = 'TODOS';
 let currentExtrasAssignedFilter = 'TODOS';
 let allFinanceAthletes = [];
@@ -903,11 +923,14 @@ const MONTH_NAMES = {
 };
 
 function getPeriodFromDateStr(dateVal, fallbackPeriod) {
-    if (!dateVal) return fallbackPeriod || 'OCTUBRE-2026';
+    if (!dateVal) return fallbackPeriod || getCurrentSystemPeriod();
     let month = null;
     let year = null;
 
-    if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
+    if (dateVal instanceof Date) {
+        month = dateVal.getMonth() + 1;
+        year = dateVal.getFullYear();
+    } else if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
         const d = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
         month = d.getUTCMonth() + 1;
         year = d.getUTCFullYear();
@@ -927,7 +950,7 @@ function getPeriodFromDateStr(dateVal, fallbackPeriod) {
     if (month && MONTH_NAMES[month] && year) {
         return `${MONTH_NAMES[month]}-${year}`;
     }
-    return fallbackPeriod || 'OCTUBRE-2026';
+    return fallbackPeriod || getCurrentSystemPeriod();
 }
 
 function decodeHtmlEntities(str) {
@@ -1104,6 +1127,9 @@ function isFinanceAuthenticated() {
 }
 
 function openFinanceModule() {
+    const sysPeriod = getCurrentSystemPeriod();
+    currentFinancePeriod = sysPeriod;
+    syncFinancePeriodSelect(sysPeriod);
     if (isFinanceAuthenticated()) {
         showView('finance-view');
         loadFinanceData();
@@ -1137,6 +1163,9 @@ function handleFinanceAuthSubmit(e) {
         sessionStorage.setItem('murano_finance_auth', 'true');
         closeFinanceAuthModal();
         toast('🔓 Acceso concedido a Finanzas');
+        const sysPeriod = getCurrentSystemPeriod();
+        currentFinancePeriod = sysPeriod;
+        syncFinancePeriodSelect(sysPeriod);
         showView('finance-view');
         loadFinanceData();
     } else {
@@ -1181,7 +1210,9 @@ function switchFinanceTab(tabId) {
     if (activeContent) activeContent.classList.remove('hidden');
     if (activeBtn) activeBtn.classList.add('active');
 
-    if (tabId === 'expenses') {
+    if (tabId === 'categories') {
+        renderCategoriesByMode();
+    } else if (tabId === 'expenses') {
         loadExpenses();
     } else if (tabId === 'audit') {
         loadAuditData();
@@ -1840,6 +1871,7 @@ function renderPendingMovements(movements) {
                     <option value="PASES" ${selectedConcept === 'PASES' ? 'selected' : ''}>🎫 Pases</option>
                     <option value="TALLERES" ${selectedConcept === 'TALLERES' ? 'selected' : ''}>🏐 Talleres</option>
                     <option value="CLASES_PERSONALIZADAS" ${selectedConcept === 'CLASES_PERSONALIZADAS' ? 'selected' : ''}>🏋️ Clases personalizadas</option>
+                    <option value="NO_INSCRITO_BAYES" ${selectedConcept === 'NO_INSCRITO_BAYES' ? 'selected' : ''}>📝 No inscrito en Bayes</option>
                     <option value="OTROS" ${selectedConcept === 'OTROS' ? 'selected' : ''}>📦 Otros (Varios)</option>
                 </select>
             </td>
@@ -2032,12 +2064,13 @@ async function assignMovement(movId, forcedAthleteId) {
         if (concept === 'POR_DEFINIR' || concept === 'EXTRA') {
             return toast('⚠️ Selecciona una categoría (ej. Campeonato, Arriendo, Otros) para clasificar este pago');
         }
-        if (pendingText) {
+        if (pendingText && concept !== 'NO_INSCRITO_BAYES') {
             return toast(`⚠️ Escribiste "${pendingText}". Haz clic en el alumno de la lista o presiona Enter para seleccionarlo.`);
         }
     }
 
     try {
+        const customNote = (!athleteId && concept === 'NO_INSCRITO_BAYES' && pendingText) ? `No inscrito en Bayes: ${pendingText}` : undefined;
         const res = await fetch(`${API_BASE_URL}/finance/movements/assign`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2046,13 +2079,16 @@ async function assignMovement(movId, forcedAthleteId) {
                 athlete_id: athleteId ? parseInt(athleteId, 10) : null,
                 concept: concept,
                 remember_rut: chk ? chk.checked : true,
-                period: currentFinancePeriod
+                period: currentFinancePeriod,
+                notes: customNote
             })
         });
 
         const data = await res.json();
         if (res.ok) {
-            const athName = athleteId ? (allFinanceAthletes.find(a => String(a.id) === String(athleteId))?.full_name || 'alumno') : 'ingreso general / profesor';
+            const athName = athleteId 
+                ? (allFinanceAthletes.find(a => String(a.id) === String(athleteId))?.full_name || 'alumno')
+                : (pendingText ? `alumno no inscrito (${pendingText})` : 'alumno no inscrito / ingreso general');
             toast(`✅ Pago clasificado como "${getConceptLabel(concept)}" para ${athName} y conciliado`);
             loadFinanceData();
         } else {
@@ -2125,11 +2161,15 @@ async function openAgrupacionDetailModal(agrupName) {
     currentAgrupDetailName = agrupName;
     currentAgrupDetailFilter = 'TODOS';
 
+    const isCategoryMode = (typeof currentCategoriesViewMode !== 'undefined' ? currentCategoriesViewMode : 'agrupacion') === 'category';
+
     const titleEl = document.getElementById('agrup-detail-title');
-    if (titleEl) titleEl.textContent = `👥 ${agrupName}`;
+    if (titleEl) titleEl.textContent = isCategoryMode ? `🏷️ Categoría: ${agrupName}` : `👥 Agrupación: ${agrupName}`;
 
     const subtitleEl = document.getElementById('agrup-detail-subtitle');
-    if (subtitleEl) subtitleEl.textContent = `Nómina de deportistas y control de aranceles para "${agrupName}"`;
+    if (subtitleEl) subtitleEl.textContent = isCategoryMode 
+        ? `Nómina de deportistas y control de aranceles para la categoría "${agrupName}"`
+        : `Nómina de deportistas y control de aranceles para "${agrupName}"`;
 
     const searchInp = document.getElementById('agrup-detail-search');
     if (searchInp) searchInp.value = '';
@@ -2148,8 +2188,6 @@ async function openAgrupacionDetailModal(agrupName) {
             console.error('Error cargando alumnos para agrupación:', e);
         }
     }
-
-    const isCategoryMode = (typeof currentCategoriesViewMode !== 'undefined' ? currentCategoriesViewMode : 'agrupacion') === 'category';
 
     const cleanTarget = cleanStr(agrupName);
     currentAgrupDetailAthletes = allFinanceAthletes.filter(a => {
@@ -2899,11 +2937,16 @@ function renderRecentModifications(mods) {
             ? `${getConceptBadgeHtml(m.concept_before)} ➔ ${getConceptBadgeHtml(m.concept_after)}`
             : getConceptBadgeHtml(m.concept_after || 'POR_DEFINIR');
 
+        let displayAmt = Number(m.amount) || 0;
+        if (displayAmt >= 1000000 && displayAmt % 100 === 0) {
+            displayAmt = displayAmt / 100;
+        }
+
         return `
             <tr>
                 <td style="white-space:nowrap; font-size:0.8rem; color:var(--text-muted);">${formatModDate(m.created_at)}</td>
                 <td>${getActionBadgeHtml(m.action)}</td>
-                <td><strong style="color:var(--success); font-size:0.88rem;">${formatCLP(m.amount)}</strong></td>
+                <td><strong style="color:var(--success); font-size:0.88rem;">${formatCLP(displayAmt)}</strong></td>
                 <td>
                     <strong style="color:var(--text); font-size:0.82rem; display:block;">${escapeHtml(m.payer_name || 'Desconocido')}</strong>
                     <code style="color:var(--accent-light); font-size:0.75rem;">${m.formatted_rut || m.payer_rut || ''}</code>
@@ -3067,6 +3110,7 @@ function getConceptLabel(concept) {
         'PASES': '🎫 Pases',
         'TALLERES': '🏐 Talleres',
         'CLASES_PERSONALIZADAS': '🏋️ Clases personalizadas',
+        'NO_INSCRITO_BAYES': '📝 No inscrito en Bayes',
         'OTROS': '📦 Otros (Varios)',
         'POR_DEFINIR': '⚡ Por definir'
     };
@@ -3120,6 +3164,9 @@ function getConceptBadgeHtml(concept) {
     } else if (c === 'ARRIENDO_GYM' || c.includes('ARRIENDO')) {
         cls = 'concept-arriendo_gym';
         label = '🏢 Pago arriendo gym';
+    } else if (c === 'NO_INSCRITO_BAYES') {
+        cls = 'concept-no-inscrito-bayes';
+        label = '📝 No inscrito en Bayes';
     } else if (c === 'OTROS' || c === 'VARIOS') {
         cls = 'concept-otros';
         label = '📦 Otros (Varios)';
@@ -3479,6 +3526,7 @@ function renderSplitParts() {
                             <option value="TALLERES" ${part.concept === 'TALLERES' ? 'selected' : ''}>🏐 Talleres</option>
                             <option value="CLASES_PERSONALIZADAS" ${part.concept === 'CLASES_PERSONALIZADAS' ? 'selected' : ''}>⭐ Clases personalizadas</option>
                             <option value="ARRIENDO_GYM" ${part.concept === 'ARRIENDO_GYM' ? 'selected' : ''}>🏢 Pago arriendo gym</option>
+                            <option value="NO_INSCRITO_BAYES" ${part.concept === 'NO_INSCRITO_BAYES' ? 'selected' : ''}>📝 No inscrito en Bayes</option>
                             <option value="ANULADO" ${part.concept === 'ANULADO' ? 'selected' : ''}>🚫 Anulado</option>
                             <option value="OTROS" ${(part.concept === 'OTROS' || part.concept === 'EXTRA') ? 'selected' : ''}>⚪ Otros</option>
                         </select>
@@ -3723,8 +3771,12 @@ function setCartolaUploadMode(mode) {
 }
 
 function handleCartolaFile(event) {
-    const file = event.target.files[0];
+    const file = event.target?.files?.[0];
     if (!file) return;
+
+    if (event.target && event.target.value !== undefined) {
+        event.target.value = '';
+    }
 
     const fileName = (file.name || '').toLowerCase();
 
@@ -5090,7 +5142,10 @@ function setCategoriesViewMode(mode) {
     renderCategoriesByMode();
 }
 
-function renderCategoriesByMode() {
+async function renderCategoriesByMode() {
+    if (!cachedSummaryData) {
+        await loadFinanceData();
+    }
     if (!cachedSummaryData) return;
     if (currentCategoriesViewMode === 'agrupacion') {
         renderCategoriesTable(cachedSummaryData.agrupaciones || []);

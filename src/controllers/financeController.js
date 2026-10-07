@@ -39,6 +39,12 @@ function cleanStr(s) {
     return res.replace(/\s+/g, ' ');
 }
 
+function getCurrentSystemPeriod() {
+    const months = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
+    const now = new Date();
+    return `${months[now.getMonth()]}-${now.getFullYear()}`;
+}
+
 function cleanAmount(val) {
     if (!val && val !== 0) return 0;
     if (typeof val === 'number') return Math.round(val);
@@ -63,7 +69,7 @@ function cleanAmount(val) {
 exports.getAthletes = async (req, res) => {
     try {
         const { period, category, agrupacion, search, status, semaforo } = req.query;
-        const currentPeriod = period || 'SEPTIEMBRE-2026';
+        const currentPeriod = period || getCurrentSystemPeriod();
 
         let query = `
             SELECT 
@@ -537,11 +543,14 @@ const MONTH_NAMES = {
 };
 
 function getPeriodFromDate(dateVal, fallbackPeriod) {
-    if (!dateVal) return fallbackPeriod || 'OCTUBRE-2026';
+    if (!dateVal) return fallbackPeriod || getCurrentSystemPeriod();
     let month = null;
     let year = null;
 
-    if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
+    if (dateVal instanceof Date) {
+        month = dateVal.getMonth() + 1;
+        year = dateVal.getFullYear();
+    } else if (typeof dateVal === 'number' && dateVal > 25000 && dateVal < 60000) {
         const d = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
         month = d.getUTCMonth() + 1;
         year = d.getUTCFullYear();
@@ -561,7 +570,7 @@ function getPeriodFromDate(dateVal, fallbackPeriod) {
     if (month && MONTH_NAMES[month] && year) {
         return `${MONTH_NAMES[month]}-${year}`;
     }
-    return fallbackPeriod || 'OCTUBRE-2026';
+    return fallbackPeriod || getCurrentSystemPeriod();
 }
 
 function normalizeDateStr(dateVal) {
@@ -773,7 +782,7 @@ exports.processCartola = async (req, res) => {
     try {
         let movements = [];
         const { period } = req.body;
-        let currentPeriod = period || 'SEPTIEMBRE-2026';
+        let currentPeriod = period || getCurrentSystemPeriod();
 
         if (req.file) {
             const fileStr = req.file.buffer.toString('utf8');
@@ -930,6 +939,7 @@ exports.processCartola = async (req, res) => {
             else if (cLow.includes('pase')) categoryConcept = 'PASES';
             else if (cLow.includes('clase') || cLow.includes('personaliz')) categoryConcept = 'CLASES_PERSONALIZADAS';
             else if (cLow.includes('arriendo') || cLow.includes('gym') || cLow.includes('gimnasio')) categoryConcept = 'ARRIENDO_GYM';
+            else if (cLow.includes('bayes') || cLow.includes('no inscrito') || cLow.includes('no inscrita') || cLow.includes('sin ingresar')) categoryConcept = 'NO_INSCRITO_BAYES';
             else if (cLow.includes('debe')) categoryConcept = 'DEBE';
             else if (cLow.includes('otro') || cLow.includes('varios')) categoryConcept = 'OTROS';
 
@@ -1153,6 +1163,16 @@ async function ensureAuditTable() {
             WHERE payer_rut = '106789975' AND athlete_id IS NOT NULL;
 
             DELETE FROM athlete_payer_ruts WHERE payer_rut = '106789975';
+
+            -- Corregir montos históricos inflados (x100) en payment_audit_logs
+            UPDATE payment_audit_logs l
+            SET amount = m.amount
+            FROM bank_movements m
+            WHERE l.movement_id = m.id AND l.amount >= 1000000 AND m.amount <= 500000;
+
+            UPDATE payment_audit_logs
+            SET amount = ROUND(amount / 100, 2)
+            WHERE amount >= 1000000 AND (amount % 100 = 0);
         `);
         auditTableInitialized = true;
     } catch (e) {
@@ -1163,6 +1183,11 @@ async function ensureAuditTable() {
 async function logPaymentModification(data) {
     try {
         await ensureAuditTable();
+        let logAmt = null;
+        if (data.amount !== undefined && data.amount !== null) {
+            const raw = typeof data.amount === 'number' ? data.amount : parseFloat(String(data.amount).replace(/[$\s]/g, '').replace(',', '.'));
+            logAmt = !isNaN(raw) ? Math.round(raw) : cleanAmount(data.amount);
+        }
         await pool.query(`
             INSERT INTO payment_audit_logs 
             (movement_id, action, athlete_id, athlete_name, payer_rut, payer_name, amount, concept_before, concept_after, notes)
@@ -1174,7 +1199,7 @@ async function logPaymentModification(data) {
             data.athlete_name || null,
             data.payer_rut || null,
             data.payer_name || null,
-            data.amount !== undefined ? cleanAmount(data.amount) : null,
+            logAmt,
             data.concept_before || null,
             data.concept_after || null,
             data.notes || null
@@ -1257,7 +1282,7 @@ exports.assignMovement = async (req, res) => {
 exports.getSummary = async (req, res) => {
     try {
         const { period } = req.query;
-        const currentPeriod = period || 'SEPTIEMBRE-2026';
+        const currentPeriod = period || getPeriodFromDate(new Date()) || 'OCTUBRE-2026';
 
         // Parsear fin de mes del periodo (ej: 'SEPTIEMBRE-2026')
         const monthMap = {
@@ -1460,7 +1485,7 @@ exports.getSummary = async (req, res) => {
 exports.getAuditReport = async (req, res) => {
     try {
         const { period } = req.query;
-        const currentPeriod = period || 'SEPTIEMBRE-2026';
+        const currentPeriod = period || getCurrentSystemPeriod();
 
         // 1. Obtener deportistas
         const athQuery = `
@@ -1905,7 +1930,7 @@ exports.registerManualPayment = async (req, res) => {
         const today = new Date().toISOString().split('T')[0];
         const payDate = date || today;
         const payConcept = concept || 'MENSUALIDAD';
-        const payPeriod = period || 'SEPTIEMBRE-2026';
+        const payPeriod = period || getCurrentSystemPeriod();
         const payMethod = method || 'EFECTIVO';
 
         const result = await pool.query(
@@ -2031,6 +2056,9 @@ exports.splitMovement = async (req, res) => {
 
         const createdSplits = [];
         for (const s of splits) {
+            const splitConcept = s.concept || 'MENSUALIDAD';
+            const hasAth = !!s.athlete_id;
+            const isConciliado = hasAth || (splitConcept !== 'POR_DEFINIR' && splitConcept !== 'EXTRA' && splitConcept !== 'MENSUALIDAD');
             const insRes = await pool.query(
                 `INSERT INTO bank_movements 
                  (date, transfer_type, account_dest, payer_rut, payer_name, bank_origin, account_origin, amount, athlete_id, period, category_concept, status, notes, updated_at)
@@ -2038,10 +2066,10 @@ exports.splitMovement = async (req, res) => {
                 [
                     orig.date, orig.transfer_type, orig.account_dest, orig.payer_rut, orig.payer_name,
                     orig.bank_origin, orig.account_origin, cleanAmount(s.amount),
-                    s.athlete_id ? parseInt(s.athlete_id, 10) : null,
+                    hasAth ? parseInt(s.athlete_id, 10) : null,
                     s.period || orig.period,
-                    s.concept || 'MENSUALIDAD',
-                    s.athlete_id ? 'CONCILIADO' : 'PENDIENTE',
+                    splitConcept,
+                    isConciliado ? 'CONCILIADO' : 'PENDIENTE',
                     s.notes || `Desglose de movimiento #${orig.id}`
                 ]
             );
@@ -2089,13 +2117,14 @@ exports.getRecentModifications = async (req, res) => {
                 a.category as athlete_category,
                 l.payer_rut,
                 l.payer_name,
-                l.amount,
+                COALESCE(m.amount, CASE WHEN l.amount >= 1000000 AND (l.amount % 100 = 0) THEN l.amount / 100 ELSE l.amount END) as amount,
                 l.concept_before,
                 l.concept_after,
                 l.notes,
                 l.created_at
             FROM payment_audit_logs l
             LEFT JOIN athletes a ON l.athlete_id = a.id
+            LEFT JOIN bank_movements m ON l.movement_id = m.id
             ORDER BY l.created_at DESC
             LIMIT 50
         `);
@@ -2167,7 +2196,7 @@ exports.registerManualPayment = async (req, res) => {
         const today = new Date().toISOString().split('T')[0];
         const payDate = date || today;
         const payConcept = concept || 'MENSUALIDAD';
-        const payPeriod = period || 'SEPTIEMBRE-2026';
+        const payPeriod = period || getCurrentSystemPeriod();
         const payMethod = method || 'EFECTIVO';
 
         const result = await pool.query(
@@ -2411,7 +2440,7 @@ exports.getArchiveStats = async (req, res) => {
 exports.getExpenses = async (req, res) => {
     try {
         const { period, category, search } = req.query;
-        const currentPeriod = period || 'SEPTIEMBRE-2026';
+        const currentPeriod = period || getCurrentSystemPeriod();
         let query = `SELECT id, TO_CHAR(date, 'YYYY-MM-DD') as date, period, category, beneficiary, amount, payment_method, receipt_number, notes, created_at FROM club_expenses WHERE 1=1`;
         const params = [];
         let pIdx = 1;
@@ -2456,7 +2485,7 @@ exports.createExpense = async (req, res) => {
         const result = await pool.query(
             `INSERT INTO club_expenses (date, period, category, beneficiary, amount, payment_method, receipt_number, notes)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, TO_CHAR(date, 'YYYY-MM-DD') as date, period, category, beneficiary, amount, payment_method, receipt_number, notes`,
-            [date || new Date(), period || 'SEPTIEMBRE-2026', category || 'OTROS', beneficiary.trim(), cleanAmt, payment_method || 'TRANSFERENCIA', receipt_number || '', notes || '']
+            [date || new Date(), period || getCurrentSystemPeriod(), category || 'OTROS', beneficiary.trim(), cleanAmt, payment_method || 'TRANSFERENCIA', receipt_number || '', notes || '']
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

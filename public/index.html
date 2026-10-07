@@ -200,7 +200,7 @@
             <button class="f-tab-btn" id="f-tab-btn-cartola" onclick="switchFinanceTab('cartola')">
                 📥 Subir Cartola Excel
             </button>
-            <button class="f-tab-btn" id="f-tab-btn-categories" onclick="switchFinanceTab('categories')">👥 Agrupaciones</button>
+            <button class="f-tab-btn" id="f-tab-btn-categories" onclick="switchFinanceTab('categories')">👥 Categorías y Agrupaciones</button>
             <button class="f-tab-btn" id="f-tab-btn-audit" onclick="switchFinanceTab('audit')" style="border-color:rgba(255,171,0,0.4); color:#ffab00;">
                 🛡️ Panel de Auditoría <span class="tab-badge" id="f-audit-badge" style="background:#ffab00; color:#000;">0</span>
             </button>
@@ -217,6 +217,10 @@
 
                 <select id="f-agrupacion-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:230px;">
                     <option value="TODAS">Todas las Agrupaciones</option>
+                </select>
+
+                <select id="f-cat-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:210px;">
+                    <option value="TODAS">Todas las Categorías (Edad)</option>
                 </select>
 
                 <select id="f-semaforo-filter" class="f-select" onchange="filterAthletesTable()" style="max-width:170px;">
@@ -342,6 +346,7 @@
                     <option value="TALLERES">🏐 Talleres</option>
                     <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
                     <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
+                    <option value="NO_INSCRITO_BAYES">📝 No inscrito en Bayes</option>
                 </select>
 
                 <select id="f-extras-sort" class="f-select" onchange="filterExtrasTable()" style="max-width:180px;">
@@ -429,6 +434,7 @@
                     <option value="TALLERES">🏐 Talleres</option>
                     <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
                     <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
+                    <option value="NO_INSCRITO_BAYES">📝 No inscrito en Bayes</option>
                 </select>
 
                 <select id="f-pending-amount-filter" class="f-select" onchange="filterPendingTable()">
@@ -1076,6 +1082,7 @@
                         <option value="TALLERES">🏐 Talleres</option>
                         <option value="CLASES_PERSONALIZADAS">🏋️ Clases personalizadas</option>
                         <option value="ARRIENDO_GYM">🏢 Pago arriendo gym</option>
+                        <option value="NO_INSCRITO_BAYES">📝 No inscrito en Bayes</option>
                     </select>
                 </div>
 
@@ -1465,7 +1472,7 @@
     </div>
 
     <!-- MODAL: DETALLE DE AGRUPACIÓN / DEUDORES POR EQUIPO -->
-    <div id="f-agrupacion-detail-modal" class="f-modal-overlay hidden" style="z-index: 10020;" onclick="if(event.target === this) closeAgrupacionDetailModal()">
+    <div id="f-agrupacion-detail-modal" class="f-modal-overlay hidden" style="z-index: 10008;" onclick="if(event.target === this) closeAgrupacionDetailModal()">
         <div class="f-modal" style="max-width:850px; width:95%; max-height:90vh; display:flex; flex-direction:column;">
             <div class="f-modal-header" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>
@@ -1673,7 +1680,7 @@
     </div>
 
     <!-- MODAL: REGISTRO DE ÚLTIMAS MODIFICACIONES DE PAGOS -->
-    <div id="f-recent-modifications-modal" class="f-modal-overlay hidden" onclick="if(event.target === this) closeRecentModificationsModal()">
+    <div id="f-recent-modifications-modal" class="f-modal-overlay hidden" style="z-index: 10030;" onclick="if(event.target === this) closeRecentModificationsModal()">
         <div class="f-modal" style="max-width:920px; width:95%; max-height:90vh; display:flex; flex-direction:column;">
             <div class="f-modal-header" style="display:flex; justify-content:space-between; align-items:center;">
                 <div>

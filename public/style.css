@@ -1761,6 +1761,11 @@ footer::before {
     border: 1px solid rgba(255, 171, 0, 0.5);
     box-shadow: 0 0 6px rgba(255, 171, 0, 0.12);
 }
+.concept-badge.concept-no-inscrito-bayes {
+    background: rgba(255, 112, 67, 0.2);
+    color: #ff7043;
+    border: 1px solid rgba(255, 112, 67, 0.45);
+}
 .concept-badge.concept-otros {
     background: rgba(0, 188, 212, 0.18);
     color: #26c6da;
