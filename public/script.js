@@ -974,20 +974,45 @@ function decodeHtmlEntities(str) {
         .replace(/&amp;/gi, '&');
 }
 
+function cleanDescPrefix(s) {
+    if (!s) return '';
+    let res = s.trim();
+    const prefixRegex = /^(?:TEF|TRF|TRANSFERENCIA|TRANSF|ABONO|TRASPASO|ELECTRONICA|INTERBANCARIO|INTERNET|FONDOS|DE|DESDE)\b[\s.:-]*/i;
+    while (true) {
+        const next = res.replace(prefixRegex, '').trim();
+        if (next === res) break;
+        res = next;
+    }
+    return res;
+}
+
 function parseScotiabankDesc(rawDesc) {
     let desc = decodeHtmlEntities(rawDesc || '').trim();
     let payerRut = '';
     let payerName = desc;
 
-    const tefMatch = desc.match(/^TEF\s+([0-9Kk.-]+)\s*(.*)/i);
-    if (tefMatch) {
-        payerRut = cleanRut(tefMatch[1]);
-        payerName = tefMatch[2].trim() || desc;
-    } else if (desc.toUpperCase().startsWith('TRANSF. DE ')) {
-        payerName = desc.substring(10).trim();
-    } else if (desc.toUpperCase().startsWith('TRANSFERENCIA DE ')) {
-        payerName = desc.substring(17).trim();
+    // 1. Buscar RUT chileno con o sin puntos (ej: 12.345.678-9, 12345678-9, 12345678-K)
+    const rutMatch = desc.match(/\b([0-9]{1,2}(?:\.[0-9]{3}){2}-?[0-9Kk]|[0-9]{7,8}-?[0-9Kk])\b/i);
+    if (rutMatch) {
+        const candRut = cleanRut(rutMatch[1]);
+        if (candRut.length >= 7 && candRut.length <= 9) {
+            payerRut = candRut;
+            const beforeRut = desc.substring(0, rutMatch.index);
+            const afterRut = desc.substring(rutMatch.index + rutMatch[0].length);
+            let cleaned = cleanDescPrefix((beforeRut + ' ' + afterRut).replace(/\s+/g, ' ').trim());
+            if (cleaned.length >= 2) {
+                payerName = cleaned;
+            }
+            return { payerRut, payerName, concept: desc };
+        }
     }
+
+    // 2. Si no tiene RUT, limpiar prefijos tipo "TRANSF. DE ...", "TRANSFERENCIA DE ..."
+    const cleanedWithoutPrefix = cleanDescPrefix(desc);
+    if (cleanedWithoutPrefix && cleanedWithoutPrefix.length >= 2) {
+        payerName = cleanedWithoutPrefix;
+    }
+
     return { payerRut, payerName, concept: desc };
 }
 
@@ -1028,23 +1053,122 @@ function parseCsvText(text) {
 function parseCartolaRowsUnified(rows) {
     if (!rows || rows.length === 0) return { movements: [], totalLeidos: 0, cargosDescartados: 0 };
 
+    // 1. Detección inteligente de fila de encabezados
     let headerIdx = -1;
-    let isScotia = false;
-
-    for (let r = 0; r < Math.min(rows.length, 25); r++) {
+    for (let r = 0; r < Math.min(rows.length, 35); r++) {
         const row = rows[r];
         if (!row || !Array.isArray(row)) continue;
-        const rowStr = row.map(c => (c || '').toString().toLowerCase()).join(' ');
+        const nonBlankCells = row.map(c => (c !== undefined && c !== null ? c.toString().trim() : '')).filter(c => c.length > 0);
+        if (nonBlankCells.length < 2) continue;
 
-        if (rowStr.includes('abonos') || rowStr.includes('cargos') || (rowStr.includes('fecha') && rowStr.includes('descripci'))) {
+        const rowStr = nonBlankCells.map(c => c.toLowerCase()).join(' ');
+
+        const hasFecha = nonBlankCells.some(c => {
+            const low = c.toLowerCase();
+            return low === 'fecha' || low.startsWith('fecha ') || low.includes('fecha movimiento') || low.includes('fecha op') || low === 'date' || low === 'fec';
+        });
+
+        const hasAbonoOrCargo = rowStr.includes('abono') || rowStr.includes('cargo') || rowStr.includes('credito') || rowStr.includes('debito');
+        const hasDesc = rowStr.includes('descrip') || rowStr.includes('detalle') || rowStr.includes('glosa') || rowStr.includes('concepto');
+        const hasMonto = rowStr.includes('monto') || rowStr.includes('importe') || rowStr.includes('valor');
+        const hasRut = rowStr.includes('rut') || rowStr.includes('ordenante') || rowStr.includes('titular');
+
+        // Descartar filas de metadatos o resumen inicial tipo "Fecha Desde, 01-09-2026", "Depositos/Abonos, 20354696.0"
+        const isMetadataRow = nonBlankCells.length <= 2 && (rowStr.includes('fecha desde') || rowStr.includes('fecha hasta') || rowStr.includes('depositos/abonos') || rowStr.includes('saldo anterior'));
+
+        if (!isMetadataRow && hasFecha && (hasAbonoOrCargo || hasDesc || hasMonto || hasRut)) {
             headerIdx = r;
-            isScotia = true;
             break;
-        } else if (rowStr.includes('rut origen') || rowStr.includes('nombre origen') || rowStr.includes('cta. abono')) {
+        } else if (hasRut && (rowStr.includes('nombre') || rowStr.includes('cta') || rowStr.includes('monto'))) {
             headerIdx = r;
-            isScotia = false;
             break;
         }
+    }
+
+    // 2. Mapeo dinámico de columnas según encabezados
+    let colDate = -1;
+    let colDesc = -1;
+    let colAbono = -1;
+    let colCargo = -1;
+    let colSaldo = -1;
+    let colDoc = -1;
+    let colRut = -1;
+    let colName = -1;
+    let colBank = -1;
+    let colMonto = -1;
+    let colBranch = -1;
+    let colDestAcc = -1;
+    let colOrigAcc = -1;
+    let colType = -1;
+
+    if (headerIdx !== -1) {
+        const headerRow = rows[headerIdx];
+        headerRow.forEach((cellVal, cIdx) => {
+            if (cellVal === undefined || cellVal === null) return;
+            let col = cellVal.toString().toLowerCase().trim();
+            col = col.replace(/[áä]/g, 'a').replace(/[éë]/g, 'e').replace(/[íï]/g, 'i').replace(/[óö]/g, 'o').replace(/[úü]/g, 'u');
+            if (!col) return;
+
+            // Cuentas bancarias
+            if (col.includes('cta') || col.includes('cuenta')) {
+                if (col.includes('abono') || col.includes('dest')) {
+                    if (colDestAcc === -1) colDestAcc = cIdx;
+                    return;
+                } else if (col.includes('orig') || col.includes('cargo')) {
+                    if (colOrigAcc === -1) colOrigAcc = cIdx;
+                    return;
+                }
+            }
+
+            // Fecha
+            if ((col.includes('fecha') || col.includes('fec') || col === 'date') && colDate === -1) {
+                colDate = cIdx;
+            }
+            // RUT
+            else if (col.includes('rut') && colRut === -1) {
+                colRut = cIdx;
+            }
+            // Banco
+            else if (col.includes('banco') && colBank === -1) {
+                colBank = cIdx;
+            }
+            // Nombre
+            else if ((col.includes('nombre') || col.includes('ordenante') || col.includes('titular') || col.includes('remitente')) && !col.includes('empresa') && colName === -1) {
+                colName = cIdx;
+            }
+            // Abono / Crédito / Depósito (excluyendo saldo)
+            else if ((col.includes('abono') || col.includes('credito') || col.includes('ingreso') || col.includes('deposito')) && !col.includes('saldo') && colAbono === -1) {
+                colAbono = cIdx;
+            }
+            // Cargo / Débito / Egreso / Giro (excluyendo saldo)
+            else if ((col.includes('cargo') || col.includes('debito') || col.includes('egreso') || col.includes('giro')) && !col.includes('saldo') && colCargo === -1) {
+                colCargo = cIdx;
+            }
+            // Saldo
+            else if (col.includes('saldo') && colSaldo === -1) {
+                colSaldo = cIdx;
+            }
+            // Documento / Comprobante / N° Operación
+            else if ((col.includes('doc') || col.includes('comprobante') || col.includes('operacion') || col.includes('cheque') || col.includes('ref')) && colDoc === -1) {
+                colDoc = cIdx;
+            }
+            // Sucursal
+            else if (col.includes('sucursal') && colBranch === -1) {
+                colBranch = cIdx;
+            }
+            // Tipo transferencia
+            else if (col.includes('tipo') && colType === -1) {
+                colType = cIdx;
+            }
+            // Monto genérico
+            else if ((col.includes('monto') || col.includes('importe') || col.includes('valor')) && colMonto === -1) {
+                colMonto = cIdx;
+            }
+            // Descripción / Detalle / Glosa / Concepto
+            else if ((col.includes('descrip') || col.includes('detalle') || col.includes('glosa') || col.includes('concepto') || col.includes('movimiento')) && colDesc === -1) {
+                colDesc = cIdx;
+            }
+        });
     }
 
     const startIdx = headerIdx !== -1 ? headerIdx + 1 : 0;
@@ -1054,75 +1178,137 @@ function parseCartolaRowsUnified(rows) {
 
     for (let r = startIdx; r < rows.length; r++) {
         const row = rows[r];
-        if (!row || !row[0]) continue;
+        if (!row || !Array.isArray(row) || row.length === 0) continue;
 
         const firstColStr = (row[0] || '').toString().trim().toLowerCase();
-        if (firstColStr === 'fecha' || firstColStr.includes('nombre empresa') || firstColStr.includes('número línea') || firstColStr.includes('saldo disponible')) {
+        if (!firstColStr) continue;
+
+        // Omitir filas de encabezados repetidos o metadatos
+        if (firstColStr === 'fecha' || firstColStr.includes('nombre empresa') || firstColStr.includes('numero cuenta') ||
+            firstColStr.includes('numero linea') || firstColStr.includes('saldo disponible') || firstColStr.includes('saldo actual') ||
+            firstColStr.includes('saldo anterior') || firstColStr.includes('depositos/abonos') || firstColStr.includes('cargos/giros') ||
+            firstColStr === 'total' || firstColStr === 'totales') {
+            continue;
+        }
+
+        // Si no se encontró fila de encabezado explícita, inferir por tamaño de fila
+        let useColDate = colDate;
+        let useColDesc = colDesc;
+        let useColAbono = colAbono;
+        let useColCargo = colCargo;
+        let useColDoc = colDoc;
+        let useColRut = colRut;
+        let useColName = colName;
+        let useColBank = colBank;
+        let useColBranch = colBranch;
+        let useColMonto = colMonto;
+        let useColOrigAcc = colOrigAcc;
+
+        if (headerIdx === -1) {
+            if (row.length >= 9) {
+                // Formato estándar TEF consolidado
+                useColDate = 0; useColRut = 3; useColName = 4; useColBank = 5; useColOrigAcc = 6; useColMonto = 7; useColDesc = 8;
+            } else if (row.length === 6) {
+                // [Fecha, Desc, Doc, Cargo, Abono, Saldo]
+                useColDate = 0; useColDesc = 1; useColDoc = 2; useColCargo = 3; useColAbono = 4;
+            } else if (row.length === 7) {
+                // [Fecha, Desc, Sucursal, Doc, Cargo, Abono, Saldo]
+                useColDate = 0; useColDesc = 1; useColBranch = 2; useColDoc = 3; useColCargo = 4; useColAbono = 5;
+            } else {
+                useColDate = 0; useColDesc = 1;
+            }
+        }
+
+        const dateRaw = useColDate !== -1 && useColDate < row.length ? row[useColDate] : row[0];
+        const dateStr = (dateRaw !== undefined && dateRaw !== null) ? dateRaw.toString().trim() : '';
+        // Validar que la celda de fecha parezca fecha válida
+        if (!dateStr || !(/\d/.test(dateStr) && (/[-/]/.test(dateStr) || (/^\d{4,5}$/.test(dateStr) && Number(dateStr) > 25000)))) {
             continue;
         }
 
         totalLeidos++;
-        const rowLooksScotia = headerIdx !== -1
-            ? isScotia
-            : (row[1] && typeof row[1] === 'string' && (row[1].startsWith('TEF') || (row[1].startsWith('TRANSF') && row.length < 8) || row[1].startsWith('REDCOMPRA')));
 
-        if (rowLooksScotia) {
-            const dateVal = row[0];
-            const desc = (row[1] || '').toString();
-            const sucursal = (row[2] || '').toString().trim();
-            let doc = (row[3] !== undefined && row[3] !== null) ? row[3].toString().trim() : '';
-            if (doc.endsWith('.0')) doc = doc.slice(0, -2);
-            if (doc === '0') doc = '';
+        // Obtener montos de Abono y Cargo
+        let abonoAmt = 0;
+        let cargoAmt = 0;
 
-            const abonoAmt = cleanAmount(row[5]);
-            if (abonoAmt <= 0) {
-                cargosDescartados++;
-                continue;
-            }
-
-            const { payerRut, payerName, concept } = parseScotiabankDesc(desc);
-
-            movements.push({
-                date: (dateVal || '').toString().trim(),
-                transfer_type: 'TRANSFERENCIA',
-                account_dest: '',
-                payer_rut: payerRut,
-                payer_name: payerName,
-                bank_origin: sucursal ? ('Scotiabank (' + sucursal + ')') : 'Scotiabank',
-                account_origin: doc,
-                amount: abonoAmt,
-                concept: concept
-            });
-        } else {
-            let dateVal = row[0];
-            let rutRaw = row[3];
-            let payerName = row[4];
-            let amountRaw = row[7] || row[5] || row[1] || 0;
-            let bank = row[5] || '';
-            let conceptRaw = row[8] || '';
-
-            const clAmt = cleanAmount(amountRaw);
-            if (clAmt <= 0) {
-                cargosDescartados++;
-                continue;
-            }
-
-            let doc = (row[6] !== undefined && row[6] !== null) ? row[6].toString().trim() : '';
-            if (doc.endsWith('.0')) doc = doc.slice(0, -2);
-
-            movements.push({
-                date: (dateVal || '').toString().trim(),
-                transfer_type: (row[1] || 'TRANSFERENCIA').toString().trim(),
-                account_dest: (row[2] || '').toString().trim(),
-                payer_rut: cleanRut(rutRaw),
-                payer_name: (payerName || '').toString().trim(),
-                bank_origin: (bank || '').toString().trim(),
-                account_origin: doc,
-                amount: clAmt,
-                concept: (conceptRaw || '').toString().trim()
-            });
+        if (useColAbono !== -1 && useColAbono < row.length) {
+            abonoAmt = cleanAmount(row[useColAbono]);
         }
+        if (useColCargo !== -1 && useColCargo < row.length) {
+            cargoAmt = cleanAmount(row[useColCargo]);
+        }
+
+        // Si no hay columna específica de abono pero hay columna de Monto único:
+        if (useColAbono === -1 && useColMonto !== -1 && useColMonto < row.length) {
+            const mVal = cleanAmount(row[useColMonto]);
+            if (mVal > 0) abonoAmt = mVal;
+            else if (mVal < 0) cargoAmt = Math.abs(mVal);
+        }
+
+        // Si no hay abono positivo o si es un egreso/cargo:
+        if (abonoAmt <= 0) {
+            cargosDescartados++;
+            continue;
+        }
+
+        // Descripción
+        const descRaw = useColDesc !== -1 && useColDesc < row.length ? (row[useColDesc] || '').toString() : '';
+
+        // Documento / comprobante
+        let doc = '';
+        if (useColDoc !== -1 && useColDoc < row.length) {
+            doc = (row[useColDoc] !== undefined && row[useColDoc] !== null) ? row[useColDoc].toString().trim() : '';
+        } else if (useColOrigAcc !== -1 && useColOrigAcc < row.length) {
+            doc = (row[useColOrigAcc] !== undefined && row[useColOrigAcc] !== null) ? row[useColOrigAcc].toString().trim() : '';
+        }
+        if (doc.endsWith('.0')) doc = doc.slice(0, -2);
+        if (doc === '0') doc = '';
+
+        // RUT y Nombre
+        let payerRut = '';
+        let payerName = '';
+
+        if (useColRut !== -1 && useColRut < row.length && row[useColRut]) {
+            payerRut = cleanRut(row[useColRut]);
+        }
+        if (useColName !== -1 && useColName < row.length && row[useColName]) {
+            payerName = row[useColName].toString().trim();
+        }
+
+        // Si no vienen en columnas dedicadas, extraer desde la descripción
+        if (!payerRut || !payerName) {
+            const parsedDesc = parseScotiabankDesc(descRaw);
+            if (!payerRut) payerRut = parsedDesc.payerRut;
+            if (!payerName) payerName = parsedDesc.payerName || descRaw;
+        }
+
+        // Banco
+        let bankOrigin = '';
+        if (useColBank !== -1 && useColBank < row.length && row[useColBank]) {
+            bankOrigin = row[useColBank].toString().trim();
+        }
+        if (!bankOrigin) {
+            if (useColBranch !== -1 && useColBranch < row.length && row[useColBranch]) {
+                bankOrigin = `Scotiabank (${row[useColBranch].toString().trim()})`;
+            } else {
+                bankOrigin = 'Scotiabank';
+            }
+        }
+
+        movements.push({
+            date: dateStr,
+            transfer_type: 'TRANSFERENCIA',
+            account_dest: (colDestAcc !== -1 && colDestAcc < row.length ? row[colDestAcc] : '') || '',
+            payer_rut: payerRut,
+            payer_name: payerName,
+            bank_origin: bankOrigin,
+            account_origin: doc,
+            amount: abonoAmt,
+            concept: descRaw
+        });
     }
+
     return { movements, totalLeidos, cargosDescartados };
 }
 
